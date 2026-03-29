@@ -1851,11 +1851,13 @@ input, select, textarea {
    PLANNER SKIP DAY
    ═══════════════════════════════════════ */
 
-.day-card.skipped {
-  opacity: 0.6;
+.skipped-slot {
+  opacity: 0.5;
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
 }
 
-.day-card.skipped .day-name {
+.skipped-slot .day-slot-label {
   text-decoration: line-through;
 }
 

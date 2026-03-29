@@ -20,8 +20,8 @@ export default function Planner({ showToast, setActivePage }) {
   const [isLeftover, setIsLeftover] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
 
-  // Skip day
-  const [skipPickerDay, setSkipPickerDay] = useState(null);
+  // Skip slot
+  const [skipPickerSlot, setSkipPickerSlot] = useState(null); // { day, slot }
   const [customSkipReason, setCustomSkipReason] = useState('');
 
   // Add slot
@@ -44,19 +44,14 @@ export default function Planner({ showToast, setActivePage }) {
     return list;
   }, [meals, filterCat, search]);
 
-  // Parse skip status from notes
-  function getDaySkip(day) {
-    const note = planNotes[day]?.text || '';
-    if (note.startsWith('[SKIP]')) {
-      return { skipped: true, reason: note.replace('[SKIP]', '').trim() };
+  // Check if a slot is skipped (skip stored as special plan entry with __skip__ prefix)
+  function getSlotSkip(day, slot) {
+    const key = slotKey(day, slot);
+    const entry = plan[key];
+    if (entry && entry.mealId && entry.mealId.startsWith('__skip__')) {
+      return { skipped: true, reason: entry.mealId.replace('__skip__', '') };
     }
     return { skipped: false, reason: '' };
-  }
-
-  function getDayNoteText(day) {
-    const note = planNotes[day]?.text || '';
-    if (note.startsWith('[SKIP]')) return '';
-    return note;
   }
 
   function openPicker(day, slot) {
@@ -80,21 +75,18 @@ export default function Planner({ showToast, setActivePage }) {
     await setPlanNote(day, value);
   }
 
-  async function skipDay(day, reason) {
-    await setPlanNote(day, `[SKIP]${reason}`);
-    // Clear all slots for this day
-    for (const slot of mealSlots) {
-      const key = slotKey(day, slot);
-      if (plan[key]) await clearPlanSlot(key);
-    }
-    setSkipPickerDay(null);
+  async function skipSlot(day, slot, reason) {
+    const key = slotKey(day, slot);
+    // Store skip as a special mealId marker
+    await setPlanSlot(key, `__skip__${reason}`, false);
+    setSkipPickerSlot(null);
     setCustomSkipReason('');
-    showToast(`${day} marked as: ${reason}`);
+    showToast(`${day} ${slot} skipped: ${reason}`);
   }
 
-  async function unskipDay(day) {
-    await setPlanNote(day, '');
-    showToast(`${day} back to normal`);
+  async function unskipSlot(day, slot) {
+    await clearPlanSlot(slotKey(day, slot));
+    showToast(`${day} ${slot} restored`);
   }
 
   async function addNewSlot() {
@@ -120,7 +112,7 @@ export default function Planner({ showToast, setActivePage }) {
 
     for (const key of Object.keys(plan)) {
       const entry = plan[key];
-      if (!entry || !entry.mealId) continue;
+      if (!entry || !entry.mealId || entry.mealId.startsWith('__skip__')) continue;
       const meal = meals.find((m) => m.id === entry.mealId);
       if (!meal) continue;
       const ingredients = parseIngredients(meal);
@@ -191,36 +183,17 @@ export default function Planner({ showToast, setActivePage }) {
       </div>
 
       {DAYS.map((day) => {
-        const daySkip = getDaySkip(day);
-        const noteText = getDayNoteText(day);
+        const noteText = planNotes[day]?.text || '';
 
         return (
-          <div key={day} className={`day-card ${day === todayDay ? 'today' : ''} ${daySkip.skipped ? 'skipped' : ''}`}>
+          <div key={day} className={`day-card ${day === todayDay ? 'today' : ''}`}>
             <div className="day-card-header">
               <span className="day-name">
                 {day}
                 {day === todayDay && <span className="badge badge-accent" style={{ marginLeft: 8 }}>Today</span>}
               </span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                {daySkip.skipped ? (
-                  <button className="btn btn-ghost btn-sm" onClick={() => unskipDay(day)} style={{ fontSize: '0.75rem', padding: '4px 10px', minHeight: 32 }}>
-                    Undo skip
-                  </button>
-                ) : (
-                  <button className="btn btn-ghost btn-sm" onClick={() => setSkipPickerDay(day)} style={{ fontSize: '0.75rem', padding: '4px 10px', minHeight: 32, color: 'var(--text-3)' }}>
-                    Skip
-                  </button>
-                )}
-                <span className="day-note-icon clickable" onClick={() => setEditingNote(editingNote === day ? null : day)}>{'\u270F\uFE0F'}</span>
-              </div>
+              <span className="day-note-icon clickable" onClick={() => setEditingNote(editingNote === day ? null : day)}>{'\u270F\uFE0F'}</span>
             </div>
-
-            {/* Skip badge */}
-            {daySkip.skipped && (
-              <div className="skip-badge">
-                {'\uD83D\uDE45'} {daySkip.reason}
-              </div>
-            )}
 
             {/* Note */}
             {editingNote === day && (
@@ -232,15 +205,32 @@ export default function Planner({ showToast, setActivePage }) {
               <div className="text-xs text-muted mb-8" style={{ fontStyle: 'italic' }}>{noteText}</div>
             )}
 
-            {/* Meal slots (hidden when skipped) */}
-            {!daySkip.skipped && mealSlots.map((slot) => {
+            {/* Meal slots */}
+            {mealSlots.map((slot) => {
               const key = slotKey(day, slot);
               const entry = plan[key];
-              const meal = entry ? meals.find((m) => m.id === entry.mealId) : null;
+              const slotSkip = getSlotSkip(day, slot);
+              const meal = (entry && !slotSkip.skipped) ? meals.find((m) => m.id === entry.mealId) : null;
+
+              if (slotSkip.skipped) {
+                return (
+                  <div key={slot} className="day-slot skipped-slot">
+                    <div>
+                      <div className="day-slot-label">{slot}</div>
+                      <div className="skip-badge" style={{ marginTop: 4, marginBottom: 0 }}>
+                        {'\uD83D\uDE45'} {slotSkip.reason}
+                      </div>
+                    </div>
+                    <button className="btn btn-ghost btn-sm" onClick={() => unskipSlot(day, slot)} style={{ fontSize: '0.7rem', padding: '4px 8px', minHeight: 28 }}>
+                      Undo
+                    </button>
+                  </div>
+                );
+              }
 
               return (
                 <div key={slot} className="day-slot" onClick={() => openPicker(day, slot)} onContextMenu={(e) => { e.preventDefault(); if (entry) handleClearSlot(day, slot); }}>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <div className="day-slot-label">{slot}</div>
                     {meal ? (
                       <div className="day-slot-meal">
@@ -251,9 +241,14 @@ export default function Planner({ showToast, setActivePage }) {
                       <div className="day-slot-empty">Tap to plan</div>
                     )}
                   </div>
-                  {entry && (
-                    <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); handleClearSlot(day, slot); }}>{'\u2715'}</span>
-                  )}
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    {entry && (
+                      <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); handleClearSlot(day, slot); }}>{'\u2715'}</span>
+                    )}
+                    <span className="text-xs clickable" onClick={(e) => { e.stopPropagation(); setSkipPickerSlot({ day, slot }); }} style={{ color: 'var(--text-3)', padding: '4px' }} title="Skip this meal">
+                      {'\uD83D\uDE45'}
+                    </span>
+                  </div>
                 </div>
               );
             })}
@@ -295,18 +290,18 @@ export default function Planner({ showToast, setActivePage }) {
         <button className="btn btn-ghost btn-block mt-12" onClick={() => setPickerOpen(false)}>Cancel</button>
       </Sheet>
 
-      {/* Skip Day Picker */}
-      <Sheet open={!!skipPickerDay} onClose={() => { setSkipPickerDay(null); setCustomSkipReason(''); }} title={`Skip ${skipPickerDay}`}>
-        <p className="text-sm text-muted mb-12">Why are you skipping this day?</p>
+      {/* Skip Meal Picker */}
+      <Sheet open={!!skipPickerSlot} onClose={() => { setSkipPickerSlot(null); setCustomSkipReason(''); }} title={skipPickerSlot ? `Skip ${skipPickerSlot.day} ${skipPickerSlot.slot}` : 'Skip'}>
+        <p className="text-sm text-muted mb-12">Why are you skipping this meal?</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {SKIP_REASONS.filter((r) => r !== 'Other').map((reason) => (
-            <button key={reason} className="btn btn-secondary btn-block" style={{ justifyContent: 'flex-start' }} onClick={() => skipDay(skipPickerDay, reason)}>
+            <button key={reason} className="btn btn-secondary btn-block" style={{ justifyContent: 'flex-start' }} onClick={() => skipPickerSlot && skipSlot(skipPickerSlot.day, skipPickerSlot.slot, reason)}>
               {reason}
             </button>
           ))}
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <input className="form-input" placeholder="Custom reason..." value={customSkipReason} onChange={(e) => setCustomSkipReason(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && customSkipReason.trim() && skipDay(skipPickerDay, customSkipReason.trim())} style={{ flex: 1 }} />
-            <button className="btn btn-primary btn-sm" onClick={() => customSkipReason.trim() && skipDay(skipPickerDay, customSkipReason.trim())} disabled={!customSkipReason.trim()}>Skip</button>
+            <input className="form-input" placeholder="Custom reason..." value={customSkipReason} onChange={(e) => setCustomSkipReason(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && customSkipReason.trim() && skipPickerSlot && skipSlot(skipPickerSlot.day, skipPickerSlot.slot, customSkipReason.trim())} style={{ flex: 1 }} />
+            <button className="btn btn-primary btn-sm" onClick={() => customSkipReason.trim() && skipPickerSlot && skipSlot(skipPickerSlot.day, skipPickerSlot.slot, customSkipReason.trim())} disabled={!customSkipReason.trim()}>Skip</button>
           </div>
         </div>
       </Sheet>
