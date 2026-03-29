@@ -4,8 +4,10 @@ import { useData } from '../contexts/DataContext';
 import Sheet from '../components/Sheet';
 import { DAYS, DEFAULT_MEAL_CATEGORIES, getDayName, getMealSlots, slotKey, parseIngredients } from '../utils/helpers';
 
+const SKIP_REASONS = ['Party', 'Wedding', 'Dine out', 'Holiday', 'Travelling', 'Guests coming', 'Other'];
+
 export default function Planner({ showToast, setActivePage }) {
-  const { profile } = useAuth();
+  const { profile, updateProfile } = useAuth();
   const { meals, plan, setPlanSlot, clearPlanSlot, planNotes, setPlanNote, grocery, pantry, addGroceryBatch } = useData();
 
   const mealCategories = ['All', ...(profile?.meal_categories || DEFAULT_MEAL_CATEGORIES)];
@@ -18,6 +20,17 @@ export default function Planner({ showToast, setActivePage }) {
   const [isLeftover, setIsLeftover] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
 
+  // Skip day
+  const [skipPickerDay, setSkipPickerDay] = useState(null);
+  const [customSkipReason, setCustomSkipReason] = useState('');
+
+  // Add slot
+  const [addSlotOpen, setAddSlotOpen] = useState(false);
+  const [newSlotName, setNewSlotName] = useState('');
+
+  // Day menu
+  const [dayMenu, setDayMenu] = useState(null);
+
   const todayDay = getDayName();
 
   const filteredMeals = useMemo(() => {
@@ -29,6 +42,21 @@ export default function Planner({ showToast, setActivePage }) {
     }
     return list;
   }, [meals, filterCat, search]);
+
+  // Parse skip status from notes
+  function getDaySkip(day) {
+    const note = planNotes[day]?.text || '';
+    if (note.startsWith('[SKIP]')) {
+      return { skipped: true, reason: note.replace('[SKIP]', '').trim() };
+    }
+    return { skipped: false, reason: '' };
+  }
+
+  function getDayNoteText(day) {
+    const note = planNotes[day]?.text || '';
+    if (note.startsWith('[SKIP]')) return '';
+    return note;
+  }
 
   function openPicker(day, slot) {
     setPickerSlot({ day, slot });
@@ -51,11 +79,42 @@ export default function Planner({ showToast, setActivePage }) {
     await setPlanNote(day, value);
   }
 
+  async function skipDay(day, reason) {
+    await setPlanNote(day, `[SKIP]${reason}`);
+    // Clear all slots for this day
+    for (const slot of mealSlots) {
+      const key = slotKey(day, slot);
+      if (plan[key]) await clearPlanSlot(key);
+    }
+    setSkipPickerDay(null);
+    setCustomSkipReason('');
+    showToast(`${day} marked as: ${reason}`);
+  }
+
+  async function unskipDay(day) {
+    await setPlanNote(day, '');
+    showToast(`${day} back to normal`);
+  }
+
+  async function addNewSlot() {
+    const trimmed = newSlotName.trim();
+    if (!trimmed || mealSlots.includes(trimmed)) return;
+    await updateProfile({ meal_slots: [...mealSlots, trimmed] });
+    setNewSlotName('');
+    setAddSlotOpen(false);
+    showToast(`"${trimmed}" slot added to all days`);
+  }
+
+  async function removeSlot(slot) {
+    if (mealSlots.length <= 1) { showToast('Need at least one meal slot'); return; }
+    await updateProfile({ meal_slots: mealSlots.filter((s) => s !== slot) });
+    showToast(`"${slot}" slot removed`);
+  }
+
   async function generateGroceryList() {
     const pantryNames = new Set(pantry.map((p) => p.name.toLowerCase()));
     const existingNames = new Set(grocery.map((g) => g.name.toLowerCase()));
     const newItems = [];
-
     for (const key of Object.keys(plan)) {
       const entry = plan[key];
       if (!entry || !entry.mealId) continue;
@@ -70,7 +129,6 @@ export default function Planner({ showToast, setActivePage }) {
         }
       }
     }
-
     if (newItems.length === 0) { showToast('No new items to add'); return; }
     await addGroceryBatch(newItems);
     showToast(`${newItems.length} item${newItems.length > 1 ? 's' : ''} added to your list`);
@@ -79,60 +137,104 @@ export default function Planner({ showToast, setActivePage }) {
 
   return (
     <div className="page">
-      <div className="page-title">Meal Planner</div>
-      <div className="page-subtitle">Plan your week</div>
+      <div className="flex-between mb-8">
+        <div>
+          <div className="page-title">Meal Planner</div>
+          <div className="page-subtitle">Plan your week</div>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={() => setAddSlotOpen(true)}>
+          + Slot
+        </button>
+      </div>
 
-      {DAYS.map((day) => (
-        <div key={day} className={`day-card ${day === todayDay ? 'today' : ''}`}>
-          <div className="day-card-header">
-            <span className="day-name">
-              {day}
-              {day === todayDay && <span className="badge badge-accent" style={{ marginLeft: 8 }}>Today</span>}
-            </span>
-            <span className="day-note-icon clickable" onClick={() => setEditingNote(editingNote === day ? null : day)}>{'\u270F\uFE0F'}</span>
-          </div>
+      {/* Slot management bar */}
+      <div className="pill-row mb-16">
+        {mealSlots.map((slot) => (
+          <span key={slot} className="pill active" style={{ gap: 6 }}>
+            {slot}
+            {mealSlots.length > 1 && (
+              <span className="clickable" onClick={() => removeSlot(slot)} style={{ opacity: 0.5, fontSize: '0.65rem' }}>{'\u2715'}</span>
+            )}
+          </span>
+        ))}
+      </div>
 
-          {editingNote === day && (
-            <div className="day-note">
-              <input placeholder="Add a note..." value={planNotes[day]?.text || ''} onChange={(e) => handleNoteChange(day, e.target.value)} onBlur={() => setEditingNote(null)} autoFocus />
+      {DAYS.map((day) => {
+        const daySkip = getDaySkip(day);
+        const noteText = getDayNoteText(day);
+
+        return (
+          <div key={day} className={`day-card ${day === todayDay ? 'today' : ''} ${daySkip.skipped ? 'skipped' : ''}`}>
+            <div className="day-card-header">
+              <span className="day-name">
+                {day}
+                {day === todayDay && <span className="badge badge-accent" style={{ marginLeft: 8 }}>Today</span>}
+              </span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {daySkip.skipped ? (
+                  <button className="btn btn-ghost btn-sm" onClick={() => unskipDay(day)} style={{ fontSize: '0.75rem', padding: '4px 10px', minHeight: 32 }}>
+                    Undo skip
+                  </button>
+                ) : (
+                  <button className="btn btn-ghost btn-sm" onClick={() => setSkipPickerDay(day)} style={{ fontSize: '0.75rem', padding: '4px 10px', minHeight: 32, color: 'var(--text-3)' }}>
+                    Skip
+                  </button>
+                )}
+                <span className="day-note-icon clickable" onClick={() => setEditingNote(editingNote === day ? null : day)}>{'\u270F\uFE0F'}</span>
+              </div>
             </div>
-          )}
 
-          {planNotes[day]?.text && editingNote !== day && (
-            <div className="text-xs text-muted mb-8" style={{ fontStyle: 'italic' }}>{planNotes[day].text}</div>
-          )}
+            {/* Skip badge */}
+            {daySkip.skipped && (
+              <div className="skip-badge">
+                {'\uD83D\uDE45'} {daySkip.reason}
+              </div>
+            )}
 
-          {mealSlots.map((slot) => {
-            const key = slotKey(day, slot);
-            const entry = plan[key];
-            const meal = entry ? meals.find((m) => m.id === entry.mealId) : null;
+            {/* Note */}
+            {editingNote === day && (
+              <div className="day-note">
+                <input placeholder="Add a note..." value={noteText} onChange={(e) => handleNoteChange(day, e.target.value)} onBlur={() => setEditingNote(null)} autoFocus />
+              </div>
+            )}
+            {noteText && editingNote !== day && (
+              <div className="text-xs text-muted mb-8" style={{ fontStyle: 'italic' }}>{noteText}</div>
+            )}
 
-            return (
-              <div key={slot} className="day-slot" onClick={() => openPicker(day, slot)} onContextMenu={(e) => { e.preventDefault(); if (entry) handleClearSlot(day, slot); }}>
-                <div>
-                  <div className="day-slot-label">{slot}</div>
-                  {meal ? (
-                    <div className="day-slot-meal">
-                      {meal.name}
-                      {entry.isLeftover && <span className="leftover-badge">{'\uD83C\uDF71'}</span>}
-                    </div>
-                  ) : (
-                    <div className="day-slot-empty">Tap to plan</div>
+            {/* Meal slots (hidden when skipped) */}
+            {!daySkip.skipped && mealSlots.map((slot) => {
+              const key = slotKey(day, slot);
+              const entry = plan[key];
+              const meal = entry ? meals.find((m) => m.id === entry.mealId) : null;
+
+              return (
+                <div key={slot} className="day-slot" onClick={() => openPicker(day, slot)} onContextMenu={(e) => { e.preventDefault(); if (entry) handleClearSlot(day, slot); }}>
+                  <div>
+                    <div className="day-slot-label">{slot}</div>
+                    {meal ? (
+                      <div className="day-slot-meal">
+                        {meal.name}
+                        {entry.isLeftover && <span className="leftover-badge">{'\uD83C\uDF71'}</span>}
+                      </div>
+                    ) : (
+                      <div className="day-slot-empty">Tap to plan</div>
+                    )}
+                  </div>
+                  {entry && (
+                    <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); handleClearSlot(day, slot); }}>{'\u2715'}</span>
                   )}
                 </div>
-                {entry && (
-                  <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); handleClearSlot(day, slot); }}>{'\u2715'}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ))}
+              );
+            })}
+          </div>
+        );
+      })}
 
       <div className="sticky-bottom">
         <button className="btn btn-primary btn-block" onClick={generateGroceryList}>{'\uD83D\uDED2'} Generate Grocery List</button>
       </div>
 
+      {/* Meal Picker Sheet */}
       <Sheet open={pickerOpen} onClose={() => setPickerOpen(false)} title="Choose a meal">
         <div className="search-bar">
           <span className="search-icon">{'\uD83D\uDD0D'}</span>
@@ -160,6 +262,37 @@ export default function Planner({ showToast, setActivePage }) {
           </div>
         )}
         <button className="btn btn-ghost btn-block mt-12" onClick={() => setPickerOpen(false)}>Cancel</button>
+      </Sheet>
+
+      {/* Skip Day Picker */}
+      <Sheet open={!!skipPickerDay} onClose={() => { setSkipPickerDay(null); setCustomSkipReason(''); }} title={`Skip ${skipPickerDay}`}>
+        <p className="text-sm text-muted mb-12">Why are you skipping this day?</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {SKIP_REASONS.filter((r) => r !== 'Other').map((reason) => (
+            <button key={reason} className="btn btn-secondary btn-block" style={{ justifyContent: 'flex-start' }} onClick={() => skipDay(skipPickerDay, reason)}>
+              {reason}
+            </button>
+          ))}
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <input className="form-input" placeholder="Custom reason..." value={customSkipReason} onChange={(e) => setCustomSkipReason(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && customSkipReason.trim() && skipDay(skipPickerDay, customSkipReason.trim())} style={{ flex: 1 }} />
+            <button className="btn btn-primary btn-sm" onClick={() => customSkipReason.trim() && skipDay(skipPickerDay, customSkipReason.trim())} disabled={!customSkipReason.trim()}>Skip</button>
+          </div>
+        </div>
+      </Sheet>
+
+      {/* Add Slot Sheet */}
+      <Sheet open={addSlotOpen} onClose={() => { setAddSlotOpen(false); setNewSlotName(''); }} title="Add a meal slot">
+        <p className="text-sm text-muted mb-12">Add a new meal slot that appears on every day (e.g. Lunch, Tea Time, Snacks).</p>
+        <div className="form-group">
+          <input className="form-input" placeholder="e.g. Lunch" value={newSlotName} onChange={(e) => setNewSlotName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addNewSlot()} autoFocus />
+        </div>
+        <div className="mb-12">
+          <div className="form-label">Current slots</div>
+          <div className="pill-row" style={{ flexWrap: 'wrap' }}>
+            {mealSlots.map((s) => <span key={s} className="pill active">{s}</span>)}
+          </div>
+        </div>
+        <button className="btn btn-primary btn-block" onClick={addNewSlot} disabled={!newSlotName.trim()}>Add Slot</button>
       </Sheet>
     </div>
   );
