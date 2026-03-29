@@ -1,11 +1,13 @@
 import { useState, useMemo } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useData } from '../contexts/DataContext';
 import Sheet from '../components/Sheet';
 import { DAYS, MEAL_CATEGORIES, getDayName } from '../utils/helpers';
 
-export default function Planner({
-  meals, plan, setPlan, grocery, setGrocery,
-  pantry, settings, showToast, setActivePage
-}) {
+export default function Planner({ showToast, setActivePage }) {
+  const { profile } = useAuth();
+  const { meals, plan, setPlanSlot, clearPlanSlot, planNotes, setPlanNote, grocery, pantry, addGroceryBatch } = useData();
+
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSlot, setPickerSlot] = useState(null);
   const [search, setSearch] = useState('');
@@ -14,13 +16,11 @@ export default function Planner({
   const [editingNote, setEditingNote] = useState(null);
 
   const todayDay = getDayName();
-  const ramadan = settings.ramadanMode;
+  const ramadan = profile?.ramadan_mode || false;
   const slotTypes = ramadan ? ['sehri', 'iftar'] : ['breakfast', 'dinner'];
   const slotLabels = ramadan
     ? { sehri: 'Sehri', iftar: 'Iftar' }
     : { breakfast: 'Breakfast', dinner: 'Dinner' };
-
-  const notes = plan.notes || {};
 
   const filteredMeals = useMemo(() => {
     let list = meals;
@@ -40,54 +40,37 @@ export default function Planner({
     setPickerOpen(true);
   }
 
-  function selectMeal(meal) {
+  async function selectMeal(meal) {
     const key = `${pickerSlot.day}-${pickerSlot.slot}`;
-    setPlan((prev) => ({ ...prev, [key]: { mealId: meal.id, isLeftover } }));
+    await setPlanSlot(key, meal.id, isLeftover);
     setPickerOpen(false);
     showToast(`${meal.name} planned for ${pickerSlot.day}`);
   }
 
-  function clearSlot(day, slot) {
+  async function handleClearSlot(day, slot) {
     const key = `${day}-${slot}`;
-    setPlan((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
+    await clearPlanSlot(key);
   }
 
-  function updateNote(day, value) {
-    setPlan((prev) => ({
-      ...prev,
-      notes: { ...prev.notes, [day]: value }
-    }));
+  async function handleNoteChange(day, value) {
+    await setPlanNote(day, value);
   }
 
-  function generateGroceryList() {
+  async function generateGroceryList() {
     const pantryNames = new Set(pantry.map((p) => p.name.toLowerCase()));
     const existingNames = new Set(grocery.map((g) => g.name.toLowerCase()));
     const newItems = [];
 
     for (const key of Object.keys(plan)) {
-      if (key === 'notes') continue;
       const entry = plan[key];
-      if (!entry) continue;
+      if (!entry || !entry.mealId) continue;
       const meal = meals.find((m) => m.id === entry.mealId);
-      if (!meal) continue;
+      if (!meal || !meal.ingredients) continue;
       for (const ing of meal.ingredients) {
         const lower = ing.toLowerCase();
         if (!pantryNames.has(lower) && !existingNames.has(lower)) {
           existingNames.add(lower);
-          newItems.push({
-            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-            name: ing,
-            category: 'Other',
-            checked: false,
-            fromPlan: true,
-            inPantry: false,
-            lowStock: false,
-            estimatedCost: null
-          });
+          newItems.push({ name: ing, category: 'Other' });
         }
       }
     }
@@ -97,7 +80,7 @@ export default function Planner({
       return;
     }
 
-    setGrocery((prev) => [...prev, ...newItems]);
+    await addGroceryBatch(newItems);
     showToast(`${newItems.length} item${newItems.length > 1 ? 's' : ''} added to your list`);
     setTimeout(() => setActivePage('grocery'), 1500);
   }
@@ -114,10 +97,7 @@ export default function Planner({
               {day}
               {day === todayDay && <span className="badge badge-accent" style={{ marginLeft: 8 }}>Today</span>}
             </span>
-            <span
-              className="day-note-icon clickable"
-              onClick={() => setEditingNote(editingNote === day ? null : day)}
-            >
+            <span className="day-note-icon clickable" onClick={() => setEditingNote(editingNote === day ? null : day)}>
               {'\u270F\uFE0F'}
             </span>
           </div>
@@ -126,16 +106,16 @@ export default function Planner({
             <div className="day-note">
               <input
                 placeholder="Add a note..."
-                value={notes[day] || ''}
-                onChange={(e) => updateNote(day, e.target.value)}
+                value={planNotes[day]?.text || ''}
+                onChange={(e) => handleNoteChange(day, e.target.value)}
                 onBlur={() => setEditingNote(null)}
                 autoFocus
               />
             </div>
           )}
 
-          {notes[day] && editingNote !== day && (
-            <div className="text-xs text-muted mb-8" style={{ fontStyle: 'italic' }}>{notes[day]}</div>
+          {planNotes[day]?.text && editingNote !== day && (
+            <div className="text-xs text-muted mb-8" style={{ fontStyle: 'italic' }}>{planNotes[day].text}</div>
           )}
 
           {slotTypes.map((slot) => {
@@ -148,7 +128,7 @@ export default function Planner({
                 key={slot}
                 className="day-slot"
                 onClick={() => openPicker(day, slot)}
-                onContextMenu={(e) => { e.preventDefault(); if (entry) clearSlot(day, slot); }}
+                onContextMenu={(e) => { e.preventDefault(); if (entry) handleClearSlot(day, slot); }}
               >
                 <div>
                   <div className="day-slot-label">{slotLabels[slot]}</div>
@@ -162,7 +142,7 @@ export default function Planner({
                   )}
                 </div>
                 {entry && (
-                  <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); clearSlot(day, slot); }}>
+                  <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); handleClearSlot(day, slot); }}>
                     {'\u2715'}
                   </span>
                 )}
@@ -172,29 +152,21 @@ export default function Planner({
         </div>
       ))}
 
-      {/* Generate Grocery List Button */}
       <div className="sticky-bottom">
         <button className="btn btn-primary btn-block" onClick={generateGroceryList}>
           {'\uD83D\uDED2'} Generate Grocery List
         </button>
       </div>
 
-      {/* Meal Picker Sheet */}
       <Sheet open={pickerOpen} onClose={() => setPickerOpen(false)} title="Choose a meal">
         <div className="search-bar">
           <span className="search-icon">{'\uD83D\uDD0D'}</span>
-          <input
-            placeholder="Search meals..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <input placeholder="Search meals..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
 
         <div className="pill-row mb-12">
           {MEAL_CATEGORIES.map((cat) => (
-            <span key={cat} className={`pill ${filterCat === cat ? 'active' : ''}`} onClick={() => setFilterCat(cat)}>
-              {cat}
-            </span>
+            <span key={cat} className={`pill ${filterCat === cat ? 'active' : ''}`} onClick={() => setFilterCat(cat)}>{cat}</span>
           ))}
         </div>
 
@@ -210,11 +182,7 @@ export default function Planner({
         ) : (
           <div style={{ maxHeight: '40dvh', overflowY: 'auto' }}>
             {filteredMeals.map((meal) => (
-              <div
-                key={meal.id}
-                className="checkbox-row"
-                onClick={() => selectMeal(meal)}
-              >
+              <div key={meal.id} className="checkbox-row" onClick={() => selectMeal(meal)}>
                 <span className="meal-card-name">{meal.name}</span>
                 <span className="pill" style={{ fontSize: '0.65rem', padding: '2px 8px', minHeight: 'auto' }}>{meal.category}</span>
               </div>

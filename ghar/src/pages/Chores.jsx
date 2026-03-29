@@ -1,38 +1,34 @@
 import { useState, useMemo } from 'react';
-import { uid, getRandomNudge, todayISO, ENERGY_LEVELS } from '../utils/helpers';
+import { useAuth } from '../contexts/AuthContext';
+import { useData } from '../contexts/DataContext';
+import { getRandomNudge, todayISO, ENERGY_LEVELS } from '../utils/helpers';
+import { notifyStreakUpdate } from '../utils/notifications';
 
-export default function Chores({ chores, setChores, settings, setSettings, showToast }) {
+export default function Chores({ showToast }) {
+  const { profile, updateProfile } = useAuth();
+  const { chores, addChore, updateChore, deleteChore: removeChore } = useData();
+
   const [activeTab, setActiveTab] = useState('daily');
   const [energyFilter, setEnergyFilter] = useState(null);
   const [oneMinMode, setOneMinMode] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
 
-  // Form state
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState('daily');
   const [formDuration, setFormDuration] = useState('');
   const [formEnergy, setFormEnergy] = useState('medium');
 
   const filtered = useMemo(() => {
-    let list = chores.filter((c) => c.type === activeTab);
-
-    // Filter out snoozed (but keep them visible with badge)
     const today = todayISO();
-    list = list.map((c) => ({
+    let list = chores.filter((c) => c.type === activeTab).map((c) => ({
       ...c,
-      _snoozed: c.snoozedUntil && c.snoozedUntil > today
+      _snoozed: c.snoozed_until && c.snoozed_until > today
     }));
 
-    if (energyFilter) {
-      list = list.filter((c) => c.energyLevel === energyFilter);
-    }
+    if (energyFilter) list = list.filter((c) => c.energy_level === energyFilter);
+    if (oneMinMode) list = list.filter((c) => c.duration_minutes && c.duration_minutes <= 1);
 
-    if (oneMinMode) {
-      list = list.filter((c) => c.durationMinutes && c.durationMinutes <= 1);
-    }
-
-    // Sort: non-snoozed incomplete first, then snoozed, then completed
     list.sort((a, b) => {
       if (a.completed !== b.completed) return a.completed ? 1 : -1;
       if (a._snoozed !== b._snoozed) return a._snoozed ? 1 : -1;
@@ -47,46 +43,39 @@ export default function Chores({ chores, setChores, settings, setSettings, showT
   const totalDaily = dailyChores.length;
   const allDone = completedDaily === totalDaily && totalDaily > 0 && activeTab === 'daily';
 
-  function handleToggle(choreId) {
+  async function handleToggle(choreId) {
     const chore = chores.find((c) => c.id === choreId);
     if (!chore) return;
     const newCompleted = !chore.completed;
 
-    setChores((prev) => prev.map((c) => {
-      if (c.id !== choreId) return c;
-      return { ...c, completed: newCompleted, lastCompleted: newCompleted ? todayISO() : c.lastCompleted };
-    }));
+    await updateChore(choreId, {
+      completed: newCompleted,
+      last_completed: newCompleted ? todayISO() : chore.last_completed
+    });
 
     if (newCompleted) {
       showToast(getRandomNudge());
 
-      // Check if all daily chores are now done
-      const updatedDaily = chores.filter((c) => c.type === 'daily').map((c) =>
+      const updatedDaily = dailyChores.map((c) =>
         c.id === choreId ? { ...c, completed: true } : c
       );
       const allComplete = updatedDaily.every((c) => c.completed);
-      if (allComplete && settings.lastStreakDate !== todayISO()) {
-        setSettings((prev) => ({
-          ...prev,
-          streakCount: (prev.streakCount || 0) + 1,
-          lastStreakDate: todayISO()
-        }));
+      if (allComplete && profile?.last_streak_date !== todayISO()) {
+        const newStreak = (profile?.streak_count || 0) + 1;
+        await updateProfile({ streak_count: newStreak, last_streak_date: todayISO() });
+        if (profile?.notifications_enabled) notifyStreakUpdate(newStreak);
       }
     }
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     if (!formName.trim()) return;
-    setChores((prev) => [...prev, {
-      id: uid(),
+    await addChore({
       name: formName.trim(),
       type: formType,
-      completed: false,
-      lastCompleted: null,
-      snoozedUntil: null,
-      durationMinutes: formDuration ? parseInt(formDuration) : null,
-      energyLevel: formEnergy
-    }]);
+      duration_minutes: formDuration ? parseInt(formDuration) : null,
+      energy_level: formEnergy
+    });
     showToast(`"${formName.trim()}" added`);
     setFormName(''); setFormDuration(''); setShowForm(false);
   }
@@ -101,28 +90,24 @@ export default function Chores({ chores, setChores, settings, setSettings, showT
     });
   }
 
-  function snoozeToTomorrow(choreId) {
+  async function snoozeToTomorrow(choreId) {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    setChores((prev) => prev.map((c) =>
-      c.id === choreId ? { ...c, snoozedUntil: tomorrow.toISOString().split('T')[0] } : c
-    ));
+    await updateChore(choreId, { snoozed_until: tomorrow.toISOString().split('T')[0] });
     setContextMenu(null);
     showToast('Snoozed until tomorrow');
   }
 
-  function snoozeToNextWeek(choreId) {
+  async function snoozeToNextWeek(choreId) {
     const nextWeek = new Date();
     nextWeek.setDate(nextWeek.getDate() + 7);
-    setChores((prev) => prev.map((c) =>
-      c.id === choreId ? { ...c, snoozedUntil: nextWeek.toISOString().split('T')[0] } : c
-    ));
+    await updateChore(choreId, { snoozed_until: nextWeek.toISOString().split('T')[0] });
     setContextMenu(null);
     showToast('Snoozed until next week');
   }
 
-  function deleteChore(choreId) {
-    setChores((prev) => prev.filter((c) => c.id !== choreId));
+  async function handleDeleteChore(choreId) {
+    await removeChore(choreId);
     setContextMenu(null);
     showToast('Chore deleted');
   }
@@ -132,65 +117,46 @@ export default function Chores({ chores, setChores, settings, setSettings, showT
       <div className="page-title">Chores</div>
       <div className="page-subtitle">Keep your space in order</div>
 
-      {/* Tab toggle */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <span className={`pill ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => setActiveTab('daily')}>Daily</span>
         <span className={`pill ${activeTab === 'weekly' ? 'active' : ''}`} onClick={() => setActiveTab('weekly')}>Weekly</span>
       </div>
 
-      {/* Energy filter */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         {ENERGY_LEVELS.map((e) => (
-          <span
-            key={e.value}
-            className={`pill ${energyFilter === e.value ? 'active' : ''}`}
-            onClick={() => setEnergyFilter(energyFilter === e.value ? null : e.value)}
-          >
+          <span key={e.value} className={`pill ${energyFilter === e.value ? 'active' : ''}`} onClick={() => setEnergyFilter(energyFilter === e.value ? null : e.value)}>
             {e.icon} {e.label}
           </span>
         ))}
-        <span
-          className={`pill ${oneMinMode ? 'active' : ''}`}
-          onClick={() => setOneMinMode(!oneMinMode)}
-        >
+        <span className={`pill ${oneMinMode ? 'active' : ''}`} onClick={() => setOneMinMode(!oneMinMode)}>
           1-min mode
         </span>
       </div>
 
-      {/* Progress bar (daily) */}
       {activeTab === 'daily' && totalDaily > 0 && (
         <div className="mb-12">
           <div className="text-sm text-muted">{completedDaily} of {totalDaily} done</div>
           <div className="progress-bar">
-            <div
-              className={`progress-fill ${allDone ? 'complete' : ''}`}
-              style={{ width: `${(completedDaily / totalDaily) * 100}%` }}
-            />
+            <div className={`progress-fill ${allDone ? 'complete' : ''}`} style={{ width: `${(completedDaily / totalDaily) * 100}%` }} />
           </div>
         </div>
       )}
 
-      {/* All done celebration */}
       {allDone && (
         <div className="celebration mb-16">
           <div className="celebration-text">All done! {'\uD83C\uDF89'}</div>
           <div className="confetti-container">
             {Array.from({ length: 12 }).map((_, i) => (
-              <div
-                key={i}
-                className="confetti-piece"
-                style={{
-                  left: `${8 + i * 8}%`,
-                  background: ['#C96A3A', '#4A7C4E', '#C47D16', '#B13030', '#6E5C4A'][i % 5],
-                  animationDelay: `${i * 0.08}s`
-                }}
-              />
+              <div key={i} className="confetti-piece" style={{
+                left: `${8 + i * 8}%`,
+                background: ['#C96A3A', '#4A7C4E', '#C47D16', '#B13030', '#6E5C4A'][i % 5],
+                animationDelay: `${i * 0.08}s`
+              }} />
             ))}
           </div>
         </div>
       )}
 
-      {/* Add button / form */}
       {!showForm ? (
         <div className="add-btn" onClick={() => setShowForm(true)}>
           <span>+</span> Add a chore
@@ -230,13 +196,12 @@ export default function Chores({ chores, setChores, settings, setSettings, showT
         </div>
       )}
 
-      {/* Chore list */}
       {filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">{'\u2705'}</div>
           <div className="empty-state-text">
             {chores.length === 0
-              ? 'No chores yet. Add some to stay on top of things!'
+              ? 'No chores yet. Add your first chore to get started!'
               : oneMinMode
               ? 'No quick chores available. Try turning off 1-min mode.'
               : `No ${activeTab} chores${energyFilter ? ` at ${energyFilter} energy` : ''}.`}
@@ -244,20 +209,16 @@ export default function Chores({ chores, setChores, settings, setSettings, showT
         </div>
       ) : (
         filtered.map((chore) => (
-          <div
-            key={chore.id}
-            className={`chore-item ${chore._snoozed ? 'snoozed' : ''}`}
-            onContextMenu={(e) => handleLongPress(e, chore)}
-          >
+          <div key={chore.id} className={`chore-item ${chore._snoozed ? 'snoozed' : ''}`} onContextMenu={(e) => handleLongPress(e, chore)}>
             <div className={`checkbox-box ${chore.completed ? 'checked' : ''}`} onClick={() => !chore._snoozed && handleToggle(chore.id)} />
             <div className="chore-info" onClick={() => !chore._snoozed && handleToggle(chore.id)}>
               <div className={`chore-name ${chore.completed ? 'checkbox-label checked' : ''}`}>{chore.name}</div>
               <div className="chore-meta">
-                {chore.durationMinutes && <span className="duration-badge">~{chore.durationMinutes} min</span>}
+                {chore.duration_minutes && <span className="duration-badge">~{chore.duration_minutes} min</span>}
                 {chore._snoozed && <span className="snooze-badge">{'\uD83D\uDCA4'} Snoozed</span>}
-                {chore.energyLevel && (
+                {chore.energy_level && (
                   <span className="duration-badge">
-                    {ENERGY_LEVELS.find((e) => e.value === chore.energyLevel)?.icon}
+                    {ENERGY_LEVELS.find((e) => e.value === chore.energy_level)?.icon}
                   </span>
                 )}
               </div>
@@ -266,20 +227,13 @@ export default function Chores({ chores, setChores, settings, setSettings, showT
         ))
       )}
 
-      {/* Context menu */}
       {contextMenu && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 249 }} onClick={() => setContextMenu(null)} />
           <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-            <div className="context-menu-item" onClick={() => snoozeToTomorrow(contextMenu.choreId)}>
-              {'\uD83D\uDCA4'} Snooze to tomorrow
-            </div>
-            <div className="context-menu-item" onClick={() => snoozeToNextWeek(contextMenu.choreId)}>
-              {'\uD83D\uDCA4'} Snooze to next week
-            </div>
-            <div className="context-menu-item danger" onClick={() => deleteChore(contextMenu.choreId)}>
-              {'\uD83D\uDDD1\uFE0F'} Delete
-            </div>
+            <div className="context-menu-item" onClick={() => snoozeToTomorrow(contextMenu.choreId)}>{'\uD83D\uDCA4'} Snooze to tomorrow</div>
+            <div className="context-menu-item" onClick={() => snoozeToNextWeek(contextMenu.choreId)}>{'\uD83D\uDCA4'} Snooze to next week</div>
+            <div className="context-menu-item danger" onClick={() => handleDeleteChore(contextMenu.choreId)}>{'\uD83D\uDDD1\uFE0F'} Delete</div>
           </div>
         </>
       )}

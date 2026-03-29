@@ -1,13 +1,15 @@
 import { useState, useMemo } from 'react';
-import { uid, MEAL_CATEGORIES, formatDate, daysBetween, todayISO, DAYS } from '../utils/helpers';
+import { useData } from '../contexts/DataContext';
+import { MEAL_CATEGORIES, formatDate, daysBetween, todayISO, DAYS } from '../utils/helpers';
 
-export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
+export default function Meals({ showToast }) {
+  const { meals, addMeal, updateMeal, deleteMeal, plan, setPlanSlot } = useData();
+
   const [activeCategory, setActiveCategory] = useState('All');
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
 
-  // Form state
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState('Other');
   const [formUrl, setFormUrl] = useState('');
@@ -23,13 +25,13 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
     if (nudgeDismissed || meals.length === 0) return null;
     const today = todayISO();
     for (const meal of meals) {
-      if (meal.lastCooked) {
-        const days = daysBetween(meal.lastCooked, today);
+      if (meal.last_cooked) {
+        const days = daysBetween(meal.last_cooked, today);
         if (days >= 21) return `You haven't cooked ${meal.name} in ${Math.floor(days / 7)} weeks`;
       }
     }
     const counts = {};
-    meals.forEach((m) => { if (m.lastCooked) counts[m.id] = (counts[m.id] || 0) + m.timesCooked; });
+    meals.forEach((m) => { if (m.last_cooked) counts[m.id] = (counts[m.id] || 0) + (m.times_cooked || 0); });
     const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
     if (top && top[1] >= 5) {
       const meal = meals.find((m) => m.id === top[0]);
@@ -38,21 +40,17 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
     return null;
   }, [meals, nudgeDismissed]);
 
-  function handleSave() {
+  async function handleSave() {
     if (!formName.trim()) return;
-    const newMeal = {
-      id: uid(),
+    await addMeal({
       name: formName.trim(),
       category: formCategory,
       recipeUrl: formUrl.trim(),
       rating: formRating,
-      ingredients: formIngredients.split(',').map((s) => s.trim()).filter(Boolean),
-      lastCooked: null,
-      timesCooked: 0
-    };
-    setMeals((prev) => [...prev, newMeal]);
+      ingredients: formIngredients.split(',').map((s) => s.trim()).filter(Boolean)
+    });
+    showToast(`"${formName.trim()}" added to meals`);
     resetForm();
-    showToast(`"${newMeal.name}" added to meals`);
   }
 
   function resetForm() {
@@ -60,19 +58,19 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
     setShowForm(false);
   }
 
-  function handleDelete(id) {
-    setMeals((prev) => prev.filter((m) => m.id !== id));
+  async function handleDelete(id) {
+    await deleteMeal(id);
     setExpandedId(null);
     showToast('Meal removed');
   }
 
-  function handleCookThisWeek(meal) {
+  async function handleCookThisWeek(meal) {
     const slots = ['breakfast', 'dinner'];
     for (const day of DAYS) {
       for (const slot of slots) {
         const key = `${day}-${slot}`;
         if (!plan[key]) {
-          setPlan((prev) => ({ ...prev, [key]: { mealId: meal.id, isLeftover: false } }));
+          await setPlanSlot(key, meal.id, false);
           showToast(`${meal.name} added to ${day} ${slot}`);
           return;
         }
@@ -81,8 +79,8 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
     showToast('All planner slots are full!');
   }
 
-  function handleRate(mealId, rating) {
-    setMeals((prev) => prev.map((m) => m.id === mealId ? { ...m, rating } : m));
+  async function handleRate(mealId, rating) {
+    await updateMeal(mealId, { rating });
   }
 
   return (
@@ -90,20 +88,14 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
       <div className="page-title">Meals</div>
       <div className="page-subtitle">{meals.length} meal{meals.length !== 1 ? 's' : ''} saved</div>
 
-      {/* Category filter */}
       <div className="pill-row mb-16">
         {MEAL_CATEGORIES.map((cat) => (
-          <span
-            key={cat}
-            className={`pill ${activeCategory === cat ? 'active' : ''}`}
-            onClick={() => setActiveCategory(cat)}
-          >
+          <span key={cat} className={`pill ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>
             {cat}
           </span>
         ))}
       </div>
 
-      {/* Nudge */}
       {nudge && (
         <div className="nudge-banner">
           <span>{nudge}</span>
@@ -111,7 +103,6 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
         </div>
       )}
 
-      {/* Add button / form */}
       {!showForm ? (
         <div className="add-btn" onClick={() => setShowForm(true)}>
           <span>+</span> Add a meal
@@ -155,7 +146,6 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
         </div>
       )}
 
-      {/* Meal list */}
       {filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">{'\uD83C\uDF72'}</div>
@@ -184,42 +174,34 @@ export default function Meals({ meals, setMeals, plan, setPlan, showToast }) {
 
             {expandedId === meal.id && (
               <div className="meal-card-details">
-                {meal.recipeUrl && (
-                  <a href={meal.recipeUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm mb-8" onClick={(e) => e.stopPropagation()}>
+                {meal.recipe_url && (
+                  <a href={meal.recipe_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm mb-8" onClick={(e) => e.stopPropagation()}>
                     Open recipe {'\u2192'}
                   </a>
                 )}
 
-                {meal.ingredients.length > 0 && (
+                {meal.ingredients && meal.ingredients.length > 0 && (
                   <div className="mb-8">
                     <div className="form-label">Ingredients</div>
                     <div className="text-sm">{meal.ingredients.join(', ')}</div>
                   </div>
                 )}
 
-                {meal.lastCooked && (
-                  <div className="text-sm text-muted mb-8">Last cooked: {formatDate(meal.lastCooked)}</div>
+                {meal.last_cooked && (
+                  <div className="text-sm text-muted mb-8">Last cooked: {formatDate(meal.last_cooked)}</div>
                 )}
 
                 <div className="star-rating mb-8">
                   {[1, 2, 3, 4, 5].map((s) => (
-                    <span
-                      key={s}
-                      className={`star ${s <= meal.rating ? 'filled' : 'empty'}`}
-                      onClick={(e) => { e.stopPropagation(); handleRate(meal.id, s); }}
-                    >
+                    <span key={s} className={`star ${s <= meal.rating ? 'filled' : 'empty'}`} onClick={(e) => { e.stopPropagation(); handleRate(meal.id, s); }}>
                       {'\u2605'}
                     </span>
                   ))}
                 </div>
 
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); handleCookThisWeek(meal); }}>
-                    Cook this week
-                  </button>
-                  <button className="btn btn-danger btn-sm" onClick={(e) => { e.stopPropagation(); handleDelete(meal.id); }}>
-                    Delete
-                  </button>
+                  <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); handleCookThisWeek(meal); }}>Cook this week</button>
+                  <button className="btn btn-danger btn-sm" onClick={(e) => { e.stopPropagation(); handleDelete(meal.id); }}>Delete</button>
                 </div>
               </div>
             )}

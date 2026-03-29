@@ -1,104 +1,26 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import './App.css';
-import { useLocalStorage } from './hooks/useLocalStorage';
-import {
-  uid, todayISO, getLastSunday,
-  DEFAULT_DAILY_CHORES, DEFAULT_WEEKLY_CHORES
-} from './utils/helpers';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { DataProvider, useData } from './contexts/DataContext';
+import { todayISO } from './utils/helpers';
 import BottomNav from './components/BottomNav';
 import QuickAdd from './components/QuickAdd';
+import Auth from './pages/Auth';
+import Tutorial from './pages/Tutorial';
 import Dashboard from './pages/Dashboard';
 import Meals from './pages/Meals';
 import Planner from './pages/Planner';
 import Grocery from './pages/Grocery';
 import Chores from './pages/Chores';
 
-function initChores() {
-  const daily = DEFAULT_DAILY_CHORES.map((c) => ({
-    id: uid(), ...c, type: 'daily', completed: false, lastCompleted: null, snoozedUntil: null
-  }));
-  const weekly = DEFAULT_WEEKLY_CHORES.map((c) => ({
-    id: uid(), ...c, type: 'weekly', completed: false, lastCompleted: null, snoozedUntil: null
-  }));
-  return [...daily, ...weekly];
-}
+function AppContent() {
+  const { user, profile, loading: authLoading, updateProfile, signOut } = useAuth();
+  const data = useData();
 
-const DEFAULT_SETTINGS = {
-  ramadanMode: false,
-  streakCount: 0,
-  lastStreakDate: null,
-  weeklyBudget: null,
-  chaosMode: false,
-  installPromptDismissed: false
-};
-
-export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [showSettings, setShowSettings] = useState(false);
   const [toast, setToast] = useState(null);
   const [toastKey, setToastKey] = useState(0);
-
-  const [meals, setMeals] = useLocalStorage('ghar_meals', []);
-  const [plan, setPlan] = useLocalStorage('ghar_plan', { notes: {} });
-  const [grocery, setGrocery] = useLocalStorage('ghar_grocery', []);
-  const [pantry, setPantry] = useLocalStorage('ghar_pantry', []);
-  const [chores, setChores] = useLocalStorage('ghar_chores', null);
-  const [settings, setSettings] = useLocalStorage('ghar_settings', DEFAULT_SETTINGS);
-
-  // Initialize default chores on first launch
-  useEffect(() => {
-    if (chores === null) {
-      setChores(initChores());
-    }
-  }, [chores, setChores]);
-
-  // Auto-reset chores on app open
-  useEffect(() => {
-    if (!chores || chores.length === 0) return;
-    const today = todayISO();
-    const lastSunday = getLastSunday();
-    let changed = false;
-
-    const updated = chores.map((c) => {
-      // Unsnooze if snoozedUntil <= today
-      if (c.snoozedUntil && c.snoozedUntil <= today) {
-        changed = true;
-        c = { ...c, snoozedUntil: null };
-      }
-
-      // Reset daily chores
-      if (c.type === 'daily' && c.completed && c.lastCompleted && c.lastCompleted < today) {
-        changed = true;
-        return { ...c, completed: false };
-      }
-
-      // Reset weekly chores
-      if (c.type === 'weekly' && c.completed && c.lastCompleted && c.lastCompleted < lastSunday) {
-        changed = true;
-        return { ...c, completed: false };
-      }
-
-      return c;
-    });
-
-    if (changed) setChores(updated);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Streak wilt logic: if missed a day, wilt one level
-  useEffect(() => {
-    if (!settings.lastStreakDate || !settings.streakCount) return;
-    const today = todayISO();
-    const lastDate = settings.lastStreakDate;
-    if (lastDate < today) {
-      const diff = Math.floor((new Date(today) - new Date(lastDate)) / (1000 * 60 * 60 * 24));
-      if (diff > 1) {
-        setSettings((prev) => ({
-          ...prev,
-          streakCount: Math.max(0, (prev.streakCount || 0) - 1)
-        }));
-      }
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -106,12 +28,42 @@ export default function App() {
     setTimeout(() => setToast(null), 2500);
   }, []);
 
-  const uncheckedGrocery = grocery.filter((g) => !g.checked).length;
+  // Loading state
+  if (authLoading || (user && data.dataLoading)) {
+    return (
+      <div className="app-shell">
+        <div className="loading-page">
+          <div className="loading-logo">{'\uD83C\uDFE0'}</div>
+          <div className="loading-text">Loading Ghar...</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Not logged in
+  if (!user) {
+    return (
+      <div className="app-shell">
+        <Auth />
+      </div>
+    );
+  }
+
+  // Tutorial not completed
+  if (profile && !profile.tutorial_completed) {
+    return (
+      <div className="app-shell">
+        <Tutorial />
+      </div>
+    );
+  }
+
+  const uncheckedGrocery = data.grocery.filter((g) => !g.checked).length;
 
   // Settings panel
   function handleExportData() {
-    const data = { meals, plan, grocery, pantry, chores, settings };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const exportData = data.exportAllData();
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -121,37 +73,10 @@ export default function App() {
     showToast('Data exported');
   }
 
-  function handleImportData(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = JSON.parse(event.target.result);
-        if (data.meals) setMeals(data.meals);
-        if (data.plan) setPlan(data.plan);
-        if (data.grocery) setGrocery(data.grocery);
-        if (data.pantry) setPantry(data.pantry);
-        if (data.chores) setChores(data.chores);
-        if (data.settings) setSettings(data.settings);
-        showToast('Data imported successfully');
-      } catch {
-        showToast('Invalid backup file');
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  function handleClearAll() {
-    const input = window.prompt('Type "delete" to clear all data:');
-    if (input !== 'delete') return;
-    setMeals([]);
-    setPlan({ notes: {} });
-    setGrocery([]);
-    setPantry([]);
-    setChores(initChores());
-    setSettings(DEFAULT_SETTINGS);
-    showToast('All data cleared');
+  async function handleSignOut() {
+    if (window.confirm('Sign out of Ghar?')) {
+      await signOut();
+    }
   }
 
   if (showSettings) {
@@ -164,6 +89,14 @@ export default function App() {
               <h2 className="page-title" style={{ marginBottom: 0 }}>Settings</h2>
             </div>
 
+            {profile && (
+              <div className="card">
+                <div className="text-sm fw-600 mb-8">Signed in as</div>
+                <div className="text-sm">{user.email}</div>
+                {profile.display_name && <div className="text-sm text-muted">{profile.display_name}</div>}
+              </div>
+            )}
+
             <div className="card">
               <div className="toggle-row">
                 <div>
@@ -171,8 +104,30 @@ export default function App() {
                   <div className="text-xs text-muted">Changes meal labels to Sehri & Iftar</div>
                 </div>
                 <div
-                  className={`toggle-switch ${settings.ramadanMode ? 'on' : ''}`}
-                  onClick={() => setSettings((s) => ({ ...s, ramadanMode: !s.ramadanMode }))}
+                  className={`toggle-switch ${profile?.ramadan_mode ? 'on' : ''}`}
+                  onClick={() => updateProfile({ ramadan_mode: !profile?.ramadan_mode })}
+                />
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="toggle-row">
+                <div>
+                  <div className="fw-600">Notifications</div>
+                  <div className="text-xs text-muted">Chore reminders and streak updates</div>
+                </div>
+                <div
+                  className={`toggle-switch ${profile?.notifications_enabled ? 'on' : ''}`}
+                  onClick={async () => {
+                    if (!profile?.notifications_enabled && 'Notification' in window) {
+                      const result = await Notification.requestPermission();
+                      if (result !== 'granted') {
+                        showToast('Notifications blocked by browser');
+                        return;
+                      }
+                    }
+                    updateProfile({ notifications_enabled: !profile?.notifications_enabled });
+                  }}
                 />
               </div>
             </div>
@@ -181,11 +136,9 @@ export default function App() {
               <div className="form-group">
                 <label className="form-label">Weekly budget ({'\u20A8'})</label>
                 <input
-                  className="form-input"
-                  type="number"
-                  placeholder="e.g. 5000"
-                  value={settings.weeklyBudget || ''}
-                  onChange={(e) => setSettings((s) => ({ ...s, weeklyBudget: e.target.value ? parseFloat(e.target.value) : null }))}
+                  className="form-input" type="number" placeholder="e.g. 5000"
+                  value={profile?.weekly_budget || ''}
+                  onChange={(e) => updateProfile({ weekly_budget: e.target.value ? parseFloat(e.target.value) : null })}
                 />
               </div>
             </div>
@@ -194,17 +147,13 @@ export default function App() {
               <button className="btn btn-secondary btn-block mb-12" onClick={handleExportData}>
                 Export all data
               </button>
-              <label className="btn btn-secondary btn-block mb-12" style={{ cursor: 'pointer' }}>
-                Import data
-                <input type="file" accept=".json" onChange={handleImportData} style={{ display: 'none' }} />
-              </label>
-              <button className="btn btn-danger btn-block" onClick={handleClearAll}>
-                Clear all data
+              <button className="btn btn-danger btn-block" onClick={handleSignOut}>
+                Sign out
               </button>
             </div>
 
             <div className="text-xs text-muted" style={{ textAlign: 'center', marginTop: 24 }}>
-              Ghar v1.0.0
+              Ghar v2.0.0
             </div>
           </div>
         </div>
@@ -215,40 +164,16 @@ export default function App() {
   function renderPage() {
     switch (activePage) {
       case 'meals':
-        return <Meals meals={meals} setMeals={setMeals} plan={plan} setPlan={setPlan} showToast={showToast} />;
+        return <Meals showToast={showToast} />;
       case 'planner':
-        return (
-          <Planner
-            meals={meals} plan={plan} setPlan={setPlan}
-            grocery={grocery} setGrocery={setGrocery}
-            pantry={pantry} settings={settings}
-            showToast={showToast} setActivePage={setActivePage}
-          />
-        );
+        return <Planner showToast={showToast} setActivePage={setActivePage} />;
       case 'grocery':
-        return (
-          <Grocery
-            grocery={grocery} setGrocery={setGrocery}
-            pantry={pantry} setPantry={setPantry}
-            settings={settings} setSettings={setSettings}
-            showToast={showToast}
-          />
-        );
+        return <Grocery showToast={showToast} />;
       case 'chores':
-        return (
-          <Chores
-            chores={chores || []} setChores={setChores}
-            settings={settings} setSettings={setSettings}
-            showToast={showToast}
-          />
-        );
+        return <Chores showToast={showToast} />;
       default:
         return (
           <Dashboard
-            settings={settings} setSettings={setSettings}
-            meals={meals} plan={plan}
-            chores={chores || []} setChores={setChores}
-            grocery={grocery}
             setActivePage={setActivePage}
             showToast={showToast}
             onSettingsOpen={() => setShowSettings(true)}
@@ -260,21 +185,19 @@ export default function App() {
   return (
     <div className="app-shell">
       {renderPage()}
-
-      <QuickAdd
-        onAddMeal={(m) => setMeals((prev) => [...prev, m])}
-        onAddGrocery={(g) => setGrocery((prev) => [...prev, g])}
-        onAddChore={(c) => setChores((prev) => [...(prev || []), c])}
-        showToast={showToast}
-      />
-
-      <BottomNav
-        activePage={activePage}
-        setActivePage={setActivePage}
-        groceryCount={uncheckedGrocery}
-      />
-
+      <QuickAdd showToast={showToast} />
+      <BottomNav activePage={activePage} setActivePage={setActivePage} groceryCount={uncheckedGrocery} />
       {toast && <div key={toastKey} className="toast">{toast}</div>}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <DataProvider>
+        <AppContent />
+      </DataProvider>
+    </AuthProvider>
   );
 }

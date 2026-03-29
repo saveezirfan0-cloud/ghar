@@ -16,3 +16,11 @@ if ('serviceWorker' in navigator) {
     });
   });
 }
+
+// Handle PWA install prompt (Android)
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  window.deferredPrompt = deferredPrompt;
+});

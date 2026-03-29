@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Sheet from './Sheet';
-import { detectAddType, uid } from '../utils/helpers';
+import { useData } from '../contexts/DataContext';
+import { detectAddType } from '../utils/helpers';
 
 const TYPE_LABELS = {
   meal: '\uD83C\uDF72 Meal',
@@ -8,7 +9,9 @@ const TYPE_LABELS = {
   chore: '\u2705 Chore'
 };
 
-export default function QuickAdd({ onAddMeal, onAddGrocery, onAddChore, showToast }) {
+export default function QuickAdd({ showToast }) {
+  const { addMeal, addGroceryItem, addChore } = useData();
+
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [detectedType, setDetectedType] = useState('chore');
@@ -23,21 +26,19 @@ export default function QuickAdd({ onAddMeal, onAddGrocery, onAddChore, showToas
   }, []);
 
   useEffect(() => {
-    if (text.trim()) {
-      setDetectedType(detectAddType(text));
-    }
+    if (text.trim()) setDetectedType(detectAddType(text));
   }, [text]);
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const trimmed = text.trim();
     if (!trimmed) return;
 
     if (detectedType === 'meal') {
-      onAddMeal({ id: uid(), name: trimmed, category: 'Other', recipeUrl: '', rating: 0, ingredients: [], lastCooked: null, timesCooked: 0 });
+      await addMeal({ name: trimmed, category: 'Other', rating: 0, ingredients: [] });
     } else if (detectedType === 'grocery') {
-      onAddGrocery({ id: uid(), name: trimmed, category: 'Other', checked: false, fromPlan: false, inPantry: false, lowStock: false, estimatedCost: null });
+      await addGroceryItem({ name: trimmed, category: 'Other' });
     } else {
-      onAddChore({ id: uid(), name: trimmed, type: 'daily', completed: false, lastCompleted: null, snoozedUntil: null, durationMinutes: null, energyLevel: 'medium' });
+      await addChore({ name: trimmed, type: 'daily', energy_level: 'medium' });
     }
 
     showToast(`Added "${trimmed}" to ${detectedType === 'meal' ? 'meals' : detectedType === 'grocery' ? 'grocery list' : 'chores'}`);
@@ -71,10 +72,7 @@ export default function QuickAdd({ onAddMeal, onAddGrocery, onAddChore, showToas
 
         {text.trim() && (
           <div className="mb-12">
-            <span
-              className="pill active clickable"
-              onClick={cycleType}
-            >
+            <span className="pill active clickable" onClick={cycleType}>
               Adding as: {TYPE_LABELS[detectedType]}
             </span>
             <span className="text-xs text-muted" style={{ marginLeft: 8 }}>Tap to change</span>

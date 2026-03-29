@@ -1,19 +1,22 @@
 import { useState, useMemo } from 'react';
-import { uid, GROCERY_CATEGORIES } from '../utils/helpers';
+import { useAuth } from '../contexts/AuthContext';
+import { useData } from '../contexts/DataContext';
+import { GROCERY_CATEGORIES } from '../utils/helpers';
 
-export default function Grocery({ grocery, setGrocery, pantry, setPantry, settings, setSettings, showToast }) {
+export default function Grocery({ showToast }) {
+  const { profile, updateProfile } = useAuth();
+  const { grocery, addGroceryItem, updateGroceryItem, deleteGroceryItem, clearCheckedGrocery, clearAllGrocery, pantry, addPantryItem, updatePantryItem, deletePantryItem } = useData();
+
   const [showForm, setShowForm] = useState(false);
   const [showPantry, setShowPantry] = useState(false);
   const [showDone, setShowDone] = useState(false);
   const [showBudget, setShowBudget] = useState(false);
 
-  // Form state
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState('Other');
   const [formCost, setFormCost] = useState('');
   const [formToPantry, setFormToPantry] = useState(false);
 
-  // Pantry form
   const [pantryName, setPantryName] = useState('');
   const [pantryCat, setPantryCat] = useState('Other');
 
@@ -30,88 +33,72 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
   }, [unchecked]);
 
   const totalCost = useMemo(() => {
-    return grocery.reduce((sum, g) => sum + (g.checked && g.estimatedCost ? g.estimatedCost : 0), 0);
+    return grocery.reduce((sum, g) => sum + (g.checked && g.estimated_cost ? parseFloat(g.estimated_cost) : 0), 0);
   }, [grocery]);
 
-  function handleAdd() {
+  async function handleAdd() {
     if (!formName.trim()) return;
 
     if (formToPantry) {
-      setPantry((prev) => [...prev, { id: uid(), name: formName.trim(), category: formCategory, lowStock: false }]);
+      await addPantryItem({ name: formName.trim(), category: formCategory });
       showToast(`"${formName.trim()}" added to pantry`);
     } else {
-      setGrocery((prev) => [...prev, {
-        id: uid(),
-        name: formName.trim(),
-        category: formCategory,
-        checked: false,
-        fromPlan: false,
-        inPantry: false,
-        lowStock: false,
+      await addGroceryItem({
+        name: formName.trim(), category: formCategory,
         estimatedCost: formCost ? parseFloat(formCost) : null
-      }]);
+      });
       showToast(`"${formName.trim()}" added to list`);
     }
 
     setFormName(''); setFormCategory('Other'); setFormCost(''); setFormToPantry(false); setShowForm(false);
   }
 
-  function toggleItem(id) {
-    setGrocery((prev) => prev.map((g) => g.id === id ? { ...g, checked: !g.checked } : g));
+  async function toggleItem(id) {
+    const item = grocery.find((g) => g.id === id);
+    if (item) await updateGroceryItem(id, { checked: !item.checked });
   }
 
-  function clearChecked() {
-    setGrocery((prev) => prev.filter((g) => !g.checked));
+  async function handleClearChecked() {
+    await clearCheckedGrocery();
     showToast('Checked items cleared');
   }
 
-  function clearAll() {
+  async function handleClearAll() {
     if (window.confirm('Clear all grocery items?')) {
-      setGrocery([]);
+      await clearAllGrocery();
       showToast('Grocery list cleared');
     }
   }
 
   function exportList() {
-    const text = unchecked.map((g) => `- ${g.name}${g.estimatedCost ? ` (~${g.estimatedCost})` : ''}`).join('\n');
+    const text = unchecked.map((g) => `- ${g.name}${g.estimated_cost ? ` (~${g.estimated_cost})` : ''}`).join('\n');
     navigator.clipboard.writeText(text || 'No items').then(() => showToast('List copied to clipboard'));
   }
 
-  function addPantryItem() {
+  async function handleAddPantry() {
     if (!pantryName.trim()) return;
-    setPantry((prev) => [...prev, { id: uid(), name: pantryName.trim(), category: pantryCat, lowStock: false }]);
+    await addPantryItem({ name: pantryName.trim(), category: pantryCat });
     showToast(`"${pantryName.trim()}" added to pantry`);
     setPantryName(''); setPantryCat('Other');
   }
 
-  function toggleLowStock(id) {
-    setPantry((prev) => prev.map((p) => {
-      if (p.id !== id) return p;
-      const newLow = !p.lowStock;
-      if (newLow) {
-        const exists = grocery.some((g) => g.name.toLowerCase() === p.name.toLowerCase() && !g.checked);
-        if (!exists) {
-          setGrocery((gPrev) => [...gPrev, {
-            id: uid(), name: p.name, category: p.category, checked: false,
-            fromPlan: false, inPantry: true, lowStock: true, estimatedCost: null
-          }]);
-        }
+  async function toggleLowStock(item) {
+    const newLow = !item.low_stock;
+    await updatePantryItem(item.id, { low_stock: newLow });
+    if (newLow) {
+      const exists = grocery.some((g) => g.name.toLowerCase() === item.name.toLowerCase() && !g.checked);
+      if (!exists) {
+        await addGroceryItem({ name: item.name, category: item.category, lowStock: true, inPantry: true });
       }
-      return { ...p, lowStock: newLow };
-    }));
+    }
   }
 
-  function removePantryItem(id) {
-    setPantry((prev) => prev.filter((p) => p.id !== id));
+  async function saveBudget(val) {
+    await updateProfile({ weekly_budget: val ? parseFloat(val) : null });
   }
 
-  function saveBudget(val) {
-    setSettings((prev) => ({ ...prev, weeklyBudget: val ? parseFloat(val) : null }));
-  }
-
-  // Pantry view
   if (showPantry) {
-    const sortedPantry = [...pantry].sort((a, b) => (b.lowStock ? 1 : 0) - (a.lowStock ? 1 : 0));
+    const sortedPantry = [...pantry].sort((a, b) => (b.low_stock ? 1 : 0) - (a.low_stock ? 1 : 0));
 
     return (
       <div className="page">
@@ -125,7 +112,7 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
           <select className="form-select" value={pantryCat} onChange={(e) => setPantryCat(e.target.value)} style={{ width: 120 }}>
             {GROCERY_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <button className="btn btn-primary btn-sm" onClick={addPantryItem} disabled={!pantryName.trim()}>Add</button>
+          <button className="btn btn-primary btn-sm" onClick={handleAddPantry} disabled={!pantryName.trim()}>Add</button>
         </div>
 
         {sortedPantry.length === 0 ? (
@@ -138,7 +125,7 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
             <div key={item.id} className="chore-item">
               <div className="chore-info">
                 <div className="chore-name">
-                  {item.lowStock && <span>{'\u26A0\uFE0F'} </span>}
+                  {item.low_stock && <span>{'\u26A0\uFE0F'} </span>}
                   {item.name}
                 </div>
                 <div className="chore-meta">
@@ -146,12 +133,12 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
                 </div>
               </div>
               <button
-                className={`btn btn-sm ${item.lowStock ? 'btn-danger' : 'btn-secondary'}`}
-                onClick={() => toggleLowStock(item.id)}
+                className={`btn btn-sm ${item.low_stock ? 'btn-danger' : 'btn-secondary'}`}
+                onClick={() => toggleLowStock(item)}
               >
-                {item.lowStock ? 'In stock' : 'Low stock'}
+                {item.low_stock ? 'In stock' : 'Low stock'}
               </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => removePantryItem(item.id)}>{'\u2715'}</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => deletePantryItem(item.id)}>{'\u2715'}</button>
             </div>
           ))
         )}
@@ -161,16 +148,15 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
 
   return (
     <div className="page">
-      {/* Header */}
       <div className="flex-between mb-8">
         <div>
           <div className="page-title">Grocery</div>
           <div className="page-subtitle">{unchecked.length} item{unchecked.length !== 1 ? 's' : ''} left</div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {settings.weeklyBudget ? (
+          {profile?.weekly_budget ? (
             <span className="budget-pill" onClick={() => setShowBudget(!showBudget)}>
-              {'\u20A8'} {totalCost} / {settings.weeklyBudget}
+              {'\u20A8'} {totalCost} / {profile.weekly_budget}
             </span>
           ) : null}
           <span className="clickable" onClick={() => setShowBudget(!showBudget)}>{'\u2699\uFE0F'}</span>
@@ -178,16 +164,13 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
         </div>
       </div>
 
-      {/* Budget setting */}
       {showBudget && (
         <div className="card">
           <div className="form-group">
             <label className="form-label">Weekly budget ({'\u20A8'})</label>
             <input
-              className="form-input"
-              type="number"
-              placeholder="e.g. 5000"
-              value={settings.weeklyBudget || ''}
+              className="form-input" type="number" placeholder="e.g. 5000"
+              value={profile?.weekly_budget || ''}
               onChange={(e) => saveBudget(e.target.value)}
             />
           </div>
@@ -195,7 +178,6 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
         </div>
       )}
 
-      {/* Add form */}
       {!showForm ? (
         <div className="add-btn" onClick={() => setShowForm(true)}>
           <span>+</span> Add item
@@ -226,7 +208,6 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
         </div>
       )}
 
-      {/* Grocery items grouped */}
       {unchecked.length === 0 && checked.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">{'\uD83D\uDED2'}</div>
@@ -244,18 +225,17 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
                   <div key={item.id} className="checkbox-row" onClick={() => toggleItem(item.id)}>
                     <div className={`checkbox-box ${item.checked ? 'checked' : ''}`} />
                     <span className="checkbox-label" style={{ flex: 1 }}>
-                      {item.lowStock && <span>{'\u26A0\uFE0F'} </span>}
+                      {item.low_stock && <span>{'\u26A0\uFE0F'} </span>}
                       {item.name}
-                      {item.fromPlan && <span className="leftover-badge" style={{ marginLeft: 4 }}>{'\uD83D\uDCC5'}</span>}
+                      {item.from_plan && <span className="leftover-badge" style={{ marginLeft: 4 }}>{'\uD83D\uDCC5'}</span>}
                     </span>
-                    {item.estimatedCost && <span className="text-xs text-muted">{'\u20A8'}{item.estimatedCost}</span>}
+                    {item.estimated_cost && <span className="text-xs text-muted">{'\u20A8'}{item.estimated_cost}</span>}
                   </div>
                 ))}
               </div>
             );
           })}
 
-          {/* Checked items */}
           {checked.length > 0 && (
             <div className="grocery-done-group">
               <div className="grocery-done-header" onClick={() => setShowDone(!showDone)}>
@@ -265,16 +245,15 @@ export default function Grocery({ grocery, setGrocery, pantry, setPantry, settin
                 <div key={item.id} className="checkbox-row" onClick={() => toggleItem(item.id)}>
                   <div className="checkbox-box checked" />
                   <span className="checkbox-label checked">{item.name}</span>
-                  {item.estimatedCost && <span className="text-xs text-muted">{'\u20A8'}{item.estimatedCost}</span>}
+                  {item.estimated_cost && <span className="text-xs text-muted">{'\u20A8'}{item.estimated_cost}</span>}
                 </div>
               ))}
             </div>
           )}
 
-          {/* Actions */}
           <div className="action-row">
-            {checked.length > 0 && <button className="btn btn-secondary btn-sm" onClick={clearChecked}>Clear checked</button>}
-            {grocery.length > 0 && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear all</button>}
+            {checked.length > 0 && <button className="btn btn-secondary btn-sm" onClick={handleClearChecked}>Clear checked</button>}
+            {grocery.length > 0 && <button className="btn btn-ghost btn-sm" onClick={handleClearAll}>Clear all</button>}
             {unchecked.length > 0 && <button className="btn btn-ghost btn-sm" onClick={exportList}>Export list</button>}
           </div>
         </>

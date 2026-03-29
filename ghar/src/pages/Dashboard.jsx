@@ -1,26 +1,30 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useData } from '../contexts/DataContext';
 import {
   todayISO, getDayName, formatDateLong, getStreakPlant,
   isSundayEvening, suggestMeal, isIOS, isStandalone,
   MEAL_SLOTS, MEAL_SLOTS_RAMADAN
 } from '../utils/helpers';
+import { scheduleChoreReminder } from '../utils/notifications';
 
-export default function Dashboard({
-  settings, setSettings,
-  meals, plan, chores, setChores,
-  grocery, setActivePage,
-  showToast, onSettingsOpen
-}) {
+export default function Dashboard({ setActivePage, showToast, onSettingsOpen }) {
+  const { profile, updateProfile } = useAuth();
+  const { meals, plan, chores, updateChore } = useData();
+
   const [chaosMode, setChaosMode] = useState(false);
   const [chaosChecks, setChaosChecks] = useState([false, false, false]);
   const [showResetRitual, setShowResetRitual] = useState(true);
   const [suggestion, setSuggestion] = useState(null);
-  const [showInstall, setShowInstall] = useState(!settings.installPromptDismissed && !isStandalone());
+
+  const ramadanMode = profile?.ramadan_mode || false;
+  const streakCount = profile?.streak_count || 0;
+  const showInstall = !profile?.install_prompt_dismissed && !isStandalone();
 
   const today = todayISO();
   const dayName = getDayName();
-  const slots = settings.ramadanMode ? MEAL_SLOTS_RAMADAN : MEAL_SLOTS;
-  const slotLabels = settings.ramadanMode
+  const slots = ramadanMode ? MEAL_SLOTS_RAMADAN : MEAL_SLOTS;
+  const slotLabels = ramadanMode
     ? { sehri: 'Sehri', iftar: 'Iftar' }
     : { breakfast: 'Breakfast', dinner: 'Dinner' };
 
@@ -37,36 +41,62 @@ export default function Dashboard({
   const dailyChores = useMemo(() => chores.filter((c) => c.type === 'daily'), [chores]);
   const completedDaily = useMemo(() => dailyChores.filter((c) => c.completed).length, [dailyChores]);
   const totalDaily = dailyChores.length;
+  const pendingDaily = totalDaily - completedDaily;
 
-  const uncheckedGrocery = useMemo(() => grocery.filter((g) => !g.checked).length, [grocery]);
+  const uncheckedGrocery = useMemo(() => {
+    return 0; // Will be passed or computed
+  }, []);
+
   const plannedMeals = useMemo(() => {
-    return Object.keys(plan).filter((k) => k !== 'notes' && plan[k]).length;
+    return Object.keys(plan).filter((k) => plan[k] && plan[k].mealId).length;
   }, [plan]);
 
-  function handleChoreToggle(choreId) {
-    setChores((prev) => prev.map((c) => {
-      if (c.id !== choreId) return c;
-      const newCompleted = !c.completed;
-      return { ...c, completed: newCompleted, lastCompleted: newCompleted ? todayISO() : c.lastCompleted };
-    }));
+  // Schedule evening notification for pending chores
+  useEffect(() => {
+    if (profile?.notifications_enabled && pendingDaily > 0) {
+      scheduleChoreReminder(pendingDaily);
+    }
+  }, [pendingDaily, profile?.notifications_enabled]);
+
+  async function handleChoreToggle(choreId) {
+    const chore = chores.find((c) => c.id === choreId);
+    if (!chore) return;
+    const newCompleted = !chore.completed;
+
+    await updateChore(choreId, {
+      completed: newCompleted,
+      last_completed: newCompleted ? todayISO() : chore.last_completed
+    });
+
+    if (newCompleted) {
+      const updatedDaily = dailyChores.map((c) =>
+        c.id === choreId ? { ...c, completed: true } : c
+      );
+      const allComplete = updatedDaily.every((c) => c.completed);
+      if (allComplete && profile?.last_streak_date !== todayISO()) {
+        await updateProfile({
+          streak_count: (profile?.streak_count || 0) + 1,
+          last_streak_date: todayISO()
+        });
+      }
+    }
   }
 
-  function handlePickMeal(slotIdx) {
-    const meal = suggestMeal(meals, null, settings.ramadanMode);
+  function handlePickMeal() {
+    const meal = suggestMeal(meals, null, ramadanMode);
     if (meal) {
-      setSuggestion({ meal, slotIdx });
+      setSuggestion({ meal });
     } else {
       showToast('Add some meals first!');
       setActivePage('meals');
     }
   }
 
-  function dismissInstall() {
-    setShowInstall(false);
-    setSettings((prev) => ({ ...prev, installPromptDismissed: true }));
+  async function dismissInstall() {
+    await updateProfile({ install_prompt_dismissed: true });
   }
 
-  const streakPlant = getStreakPlant(settings.streakCount || 0);
+  const streakPlant = getStreakPlant(streakCount);
 
   if (chaosMode) {
     const questions = [
@@ -108,14 +138,19 @@ export default function Dashboard({
         <span className="gear-btn" onClick={onSettingsOpen}>{'\u2699\uFE0F'}</span>
       </div>
 
+      {/* Greeting */}
+      {profile?.display_name && (
+        <p className="text-sm text-muted mb-16">Welcome back, {profile.display_name}</p>
+      )}
+
       {/* PWA Install Banner */}
       {showInstall && (
         <div className="install-banner">
           <h3>Install Ghar on your phone</h3>
           {isIOS() ? (
-            <p>Tap the share icon <strong>(</strong>{'↑'}<strong>)</strong> at the bottom of Safari, then tap <strong>"Add to Home Screen"</strong>.</p>
+            <p>Tap the share icon <strong>(</strong>{'\u2191'}<strong>)</strong> at the bottom of Safari, then tap <strong>"Add to Home Screen"</strong>.</p>
           ) : (
-            <p>Tap the menu <strong>(⋮)</strong> in your browser, then tap <strong>"Install app"</strong> or <strong>"Add to Home Screen"</strong>.</p>
+            <p>Tap the menu <strong>(\u22EE)</strong> in your browser, then tap <strong>"Install app"</strong> or <strong>"Add to Home Screen"</strong>.</p>
           )}
           <div className="install-banner-actions">
             <button className="btn btn-secondary btn-sm" onClick={dismissInstall}>Dismiss</button>
@@ -129,7 +164,7 @@ export default function Dashboard({
           <span className="streak-plant grow">{streakPlant}</span>
           <div>
             <div className="font-display" style={{ fontSize: '1.1rem', fontStyle: 'italic' }}>
-              {settings.streakCount || 0} day streak
+              {streakCount} day streak
             </div>
             <div className="text-sm text-muted">Complete all daily chores to grow</div>
           </div>
@@ -138,7 +173,7 @@ export default function Dashboard({
 
       {/* Today's Meals */}
       <div className="card">
-        <div className="card-title">{settings.ramadanMode ? "Today's Meals (Ramadan)" : "Today's Meals"}</div>
+        <div className="card-title">{ramadanMode ? "Today's Meals (Ramadan)" : "Today's Meals"}</div>
         {todayMeals.map((item, idx) => (
           <div key={item.slot} className="day-slot" style={{ marginBottom: idx < todayMeals.length - 1 ? 8 : 0 }}>
             <div>
@@ -153,7 +188,7 @@ export default function Dashboard({
               )}
             </div>
             {!item.meal && (
-              <button className="btn btn-secondary btn-sm" onClick={() => handlePickMeal(idx)}>Pick one</button>
+              <button className="btn btn-secondary btn-sm" onClick={handlePickMeal}>Pick one</button>
             )}
           </div>
         ))}
@@ -163,12 +198,13 @@ export default function Dashboard({
             <div className="fw-600">{suggestion.meal.name}</div>
             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <button className="btn btn-primary btn-sm" onClick={() => {
-                showToast(`Added "${suggestion.meal.name}" to today's plan`);
+                showToast(`"${suggestion.meal.name}" — go plan it!`);
                 setSuggestion(null);
+                setActivePage('planner');
               }}>Use this</button>
               <button className="btn btn-ghost btn-sm" onClick={() => {
-                const meal = suggestMeal(meals, null, settings.ramadanMode);
-                if (meal) setSuggestion({ ...suggestion, meal });
+                const meal = suggestMeal(meals, null, ramadanMode);
+                if (meal) setSuggestion({ meal });
               }}>Try another</button>
             </div>
           </div>
@@ -179,7 +215,10 @@ export default function Dashboard({
       <div className="card">
         <div className="card-title">Today's Chores</div>
         {dailyChores.length === 0 ? (
-          <div className="text-sm text-muted">No daily chores set up yet</div>
+          <div className="text-sm text-muted">
+            No daily chores yet.{' '}
+            <span className="text-accent clickable" onClick={() => setActivePage('chores')}>Add some</span>
+          </div>
         ) : (
           <>
             <div className="text-sm text-muted mb-8">{completedDaily} of {totalDaily} done</div>
@@ -207,8 +246,8 @@ export default function Dashboard({
       {/* Quick Counts */}
       <div className="quick-counts">
         <div className="quick-count-pill" onClick={() => setActivePage('grocery')}>
-          <span>{'\uD83D\uDED2'} {uncheckedGrocery}</span>
-          items left
+          <span>{'\uD83D\uDED2'}</span>
+          Grocery
         </div>
         <div className="quick-count-pill">
           <span>{'\u2705'} {completedDaily}</span>
