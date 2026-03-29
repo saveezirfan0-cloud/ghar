@@ -1,26 +1,36 @@
 import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
-import { GROCERY_CATEGORIES } from '../utils/helpers';
+import { GROCERY_CATEGORIES, QUANTITY_UNITS, DEFAULT_GROCERY_CHANNELS } from '../utils/helpers';
 
 export default function Grocery({ showToast }) {
-  const { profile, updateProfile } = useAuth();
-  const { grocery, addGroceryItem, updateGroceryItem, deleteGroceryItem, clearCheckedGrocery, clearAllGrocery, pantry, addPantryItem, updatePantryItem, deletePantryItem } = useData();
+  const { profile } = useAuth();
+  const { grocery, addGroceryItem, updateGroceryItem, deleteGroceryItem, clearCheckedGrocery, clearAllGrocery } = useData();
+
+  const channels = profile?.grocery_channels || DEFAULT_GROCERY_CHANNELS;
 
   const [showForm, setShowForm] = useState(false);
-  const [showPantry, setShowPantry] = useState(false);
   const [showDone, setShowDone] = useState(false);
-  const [showBudget, setShowBudget] = useState(false);
+  const [filterCategory, setFilterCategory] = useState('All');
+  const [filterChannel, setFilterChannel] = useState('All');
 
+  // Form state
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState('Other');
+  const [formBrand, setFormBrand] = useState('');
+  const [formQty, setFormQty] = useState('');
+  const [formUnit, setFormUnit] = useState('pc');
   const [formCost, setFormCost] = useState('');
-  const [formToPantry, setFormToPantry] = useState(false);
+  const [formChannel, setFormChannel] = useState('');
+  const [formStockQty, setFormStockQty] = useState('');
 
-  const [pantryName, setPantryName] = useState('');
-  const [pantryCat, setPantryCat] = useState('Other');
+  const unchecked = useMemo(() => {
+    let list = grocery.filter((g) => !g.checked);
+    if (filterCategory !== 'All') list = list.filter((g) => g.category === filterCategory);
+    if (filterChannel !== 'All') list = list.filter((g) => g.channel === filterChannel);
+    return list;
+  }, [grocery, filterCategory, filterChannel]);
 
-  const unchecked = useMemo(() => grocery.filter((g) => !g.checked), [grocery]);
   const checked = useMemo(() => grocery.filter((g) => g.checked), [grocery]);
 
   const grouped = useMemo(() => {
@@ -36,21 +46,28 @@ export default function Grocery({ showToast }) {
     return grocery.reduce((sum, g) => sum + (g.checked && g.estimated_cost ? parseFloat(g.estimated_cost) : 0), 0);
   }, [grocery]);
 
+  const totalUnchecked = grocery.filter((g) => !g.checked).length;
+
   async function handleAdd() {
     if (!formName.trim()) return;
+    await addGroceryItem({
+      name: formName.trim(),
+      category: formCategory,
+      brand: formBrand.trim(),
+      quantity: formQty ? parseFloat(formQty) : null,
+      quantity_unit: formUnit,
+      channel: formChannel,
+      stock_qty: formStockQty ? parseFloat(formStockQty) : 0,
+      estimatedCost: formCost ? parseFloat(formCost) : null
+    });
+    showToast(`"${formName.trim()}" added to list`);
+    resetForm();
+  }
 
-    if (formToPantry) {
-      await addPantryItem({ name: formName.trim(), category: formCategory });
-      showToast(`"${formName.trim()}" added to pantry`);
-    } else {
-      await addGroceryItem({
-        name: formName.trim(), category: formCategory,
-        estimatedCost: formCost ? parseFloat(formCost) : null
-      });
-      showToast(`"${formName.trim()}" added to list`);
-    }
-
-    setFormName(''); setFormCategory('Other'); setFormCost(''); setFormToPantry(false); setShowForm(false);
+  function resetForm() {
+    setFormName(''); setFormCategory('Other'); setFormBrand(''); setFormQty('');
+    setFormUnit('pc'); setFormCost(''); setFormChannel(''); setFormStockQty('');
+    setShowForm(false);
   }
 
   async function toggleItem(id) {
@@ -71,79 +88,16 @@ export default function Grocery({ showToast }) {
   }
 
   function exportList() {
-    const text = unchecked.map((g) => `- ${g.name}${g.estimated_cost ? ` (~${g.estimated_cost})` : ''}`).join('\n');
+    const items = grocery.filter((g) => !g.checked);
+    const text = items.map((g) => {
+      let line = `- ${g.name}`;
+      if (g.brand) line += ` (${g.brand})`;
+      if (g.quantity) line += ` ${g.quantity}${g.quantity_unit}`;
+      if (g.estimated_cost) line += ` ~ \u20A8${g.estimated_cost}`;
+      if (g.channel) line += ` [${g.channel}]`;
+      return line;
+    }).join('\n');
     navigator.clipboard.writeText(text || 'No items').then(() => showToast('List copied to clipboard'));
-  }
-
-  async function handleAddPantry() {
-    if (!pantryName.trim()) return;
-    await addPantryItem({ name: pantryName.trim(), category: pantryCat });
-    showToast(`"${pantryName.trim()}" added to pantry`);
-    setPantryName(''); setPantryCat('Other');
-  }
-
-  async function toggleLowStock(item) {
-    const newLow = !item.low_stock;
-    await updatePantryItem(item.id, { low_stock: newLow });
-    if (newLow) {
-      const exists = grocery.some((g) => g.name.toLowerCase() === item.name.toLowerCase() && !g.checked);
-      if (!exists) {
-        await addGroceryItem({ name: item.name, category: item.category, lowStock: true, inPantry: true });
-      }
-    }
-  }
-
-  async function saveBudget(val) {
-    await updateProfile({ weekly_budget: val ? parseFloat(val) : null });
-  }
-
-  if (showPantry) {
-    const sortedPantry = [...pantry].sort((a, b) => (b.low_stock ? 1 : 0) - (a.low_stock ? 1 : 0));
-
-    return (
-      <div className="page">
-        <div className="pantry-header">
-          <div className="page-title">Pantry</div>
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowPantry(false)}>Back to list</button>
-        </div>
-
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <input className="form-input" placeholder="Item name" value={pantryName} onChange={(e) => setPantryName(e.target.value)} style={{ flex: 1 }} />
-          <select className="form-select" value={pantryCat} onChange={(e) => setPantryCat(e.target.value)} style={{ width: 120 }}>
-            {GROCERY_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <button className="btn btn-primary btn-sm" onClick={handleAddPantry} disabled={!pantryName.trim()}>Add</button>
-        </div>
-
-        {sortedPantry.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">{'\uD83C\uDFE0'}</div>
-            <div className="empty-state-text">Your pantry is empty. Add items you always have at home.</div>
-          </div>
-        ) : (
-          sortedPantry.map((item) => (
-            <div key={item.id} className="chore-item">
-              <div className="chore-info">
-                <div className="chore-name">
-                  {item.low_stock && <span>{'\u26A0\uFE0F'} </span>}
-                  {item.name}
-                </div>
-                <div className="chore-meta">
-                  <span className="duration-badge">{item.category}</span>
-                </div>
-              </div>
-              <button
-                className={`btn btn-sm ${item.low_stock ? 'btn-danger' : 'btn-secondary'}`}
-                onClick={() => toggleLowStock(item)}
-              >
-                {item.low_stock ? 'In stock' : 'Low stock'}
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => deletePantryItem(item.id)}>{'\u2715'}</button>
-            </div>
-          ))
-        )}
-      </div>
-    );
   }
 
   return (
@@ -151,33 +105,36 @@ export default function Grocery({ showToast }) {
       <div className="flex-between mb-8">
         <div>
           <div className="page-title">Grocery</div>
-          <div className="page-subtitle">{unchecked.length} item{unchecked.length !== 1 ? 's' : ''} left</div>
+          <div className="page-subtitle">{totalUnchecked} item{totalUnchecked !== 1 ? 's' : ''} to buy</div>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {profile?.weekly_budget ? (
-            <span className="budget-pill" onClick={() => setShowBudget(!showBudget)}>
-              {'\u20A8'} {totalCost} / {profile.weekly_budget}
-            </span>
-          ) : null}
-          <span className="clickable" onClick={() => setShowBudget(!showBudget)}>{'\u2699\uFE0F'}</span>
-          <span className="clickable" onClick={() => setShowPantry(true)}>{'\uD83C\uDFE0'}</span>
-        </div>
+        {profile?.weekly_budget ? (
+          <span className="budget-pill">
+            {'\u20A8'} {totalCost} / {profile.weekly_budget}
+          </span>
+        ) : null}
       </div>
 
-      {showBudget && (
-        <div className="card">
-          <div className="form-group">
-            <label className="form-label">Weekly budget ({'\u20A8'})</label>
-            <input
-              className="form-input" type="number" placeholder="e.g. 5000"
-              value={profile?.weekly_budget || ''}
-              onChange={(e) => saveBudget(e.target.value)}
-            />
-          </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowBudget(false)}>Done</button>
+      {/* Filters */}
+      <div className="pill-row mb-8">
+        {['All', ...GROCERY_CATEGORIES].map((cat) => (
+          <span key={cat} className={`pill ${filterCategory === cat ? 'active' : ''}`} onClick={() => setFilterCategory(cat)}>
+            {cat}
+          </span>
+        ))}
+      </div>
+
+      {channels.length > 1 && (
+        <div className="pill-row mb-16">
+          <span className={`pill ${filterChannel === 'All' ? 'active' : ''}`} onClick={() => setFilterChannel('All')}>All channels</span>
+          {channels.map((ch) => (
+            <span key={ch} className={`pill ${filterChannel === ch ? 'active' : ''}`} onClick={() => setFilterChannel(ch)}>
+              {ch}
+            </span>
+          ))}
         </div>
       )}
 
+      {/* Add form */}
       {!showForm ? (
         <div className="add-btn" onClick={() => setShowForm(true)}>
           <span>+</span> Add item
@@ -185,30 +142,63 @@ export default function Grocery({ showToast }) {
       ) : (
         <div className="inline-form">
           <div className="form-group">
-            <input className="form-input" placeholder="Item name" value={formName} onChange={(e) => setFormName(e.target.value)} autoFocus />
+            <label className="form-label">Item name</label>
+            <input className="form-input" placeholder="e.g. Onions" value={formName} onChange={(e) => setFormName(e.target.value)} autoFocus />
           </div>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">Category</label>
               <select className="form-select" value={formCategory} onChange={(e) => setFormCategory(e.target.value)}>
                 {GROCERY_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div className="form-group" style={{ flex: 1 }}>
-              <input className="form-input" type="number" placeholder="Cost (optional)" value={formCost} onChange={(e) => setFormCost(e.target.value)} />
+              <label className="form-label">Brand (optional)</label>
+              <input className="form-input" placeholder="e.g. Shan" value={formBrand} onChange={(e) => setFormBrand(e.target.value)} />
             </div>
           </div>
-          <div className="toggle-row" style={{ paddingTop: 0, paddingBottom: 8 }}>
-            <span className="text-sm">Add to pantry instead</span>
-            <div className={`toggle-switch ${formToPantry ? 'on' : ''}`} onClick={() => setFormToPantry(!formToPantry)} />
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">Quantity</label>
+              <input className="form-input" type="number" placeholder="e.g. 2" value={formQty} onChange={(e) => setFormQty(e.target.value)} />
+            </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">Unit</label>
+              <select className="form-select" value={formUnit} onChange={(e) => setFormUnit(e.target.value)}>
+                {QUANTITY_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">Cost est.</label>
+              <input className="form-input" type="number" placeholder="\u20A8" value={formCost} onChange={(e) => setFormCost(e.target.value)} />
+            </div>
           </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">Where to buy</label>
+              <select className="form-select" value={formChannel} onChange={(e) => setFormChannel(e.target.value)}>
+                <option value="">Any</option>
+                {channels.map((ch) => <option key={ch} value={ch}>{ch}</option>)}
+              </select>
+            </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">Stock at home</label>
+              <input className="form-input" type="number" placeholder="0" value={formStockQty} onChange={(e) => setFormStockQty(e.target.value)} />
+            </div>
+          </div>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={!formName.trim()}>Add</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setShowForm(false); setFormName(''); }}>Cancel</button>
+            <button className="btn btn-ghost btn-sm" onClick={resetForm}>Cancel</button>
           </div>
         </div>
       )}
 
-      {unchecked.length === 0 && checked.length === 0 ? (
+      {/* Grocery list */}
+      {totalUnchecked === 0 && checked.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">{'\uD83D\uDED2'}</div>
           <div className="empty-state-text">Your grocery list is empty. Add items or generate from your meal plan!</div>
@@ -222,20 +212,31 @@ export default function Grocery({ showToast }) {
               <div key={cat} className="grocery-group">
                 <div className="section-header">{cat}</div>
                 {items.map((item) => (
-                  <div key={item.id} className="checkbox-row" onClick={() => toggleItem(item.id)}>
-                    <div className={`checkbox-box ${item.checked ? 'checked' : ''}`} />
-                    <span className="checkbox-label" style={{ flex: 1 }}>
-                      {item.low_stock && <span>{'\u26A0\uFE0F'} </span>}
-                      {item.name}
-                      {item.from_plan && <span className="leftover-badge" style={{ marginLeft: 4 }}>{'\uD83D\uDCC5'}</span>}
-                    </span>
-                    {item.estimated_cost && <span className="text-xs text-muted">{'\u20A8'}{item.estimated_cost}</span>}
+                  <div key={item.id} className="grocery-item-row">
+                    <div className="checkbox-row" onClick={() => toggleItem(item.id)} style={{ flex: 1 }}>
+                      <div className={`checkbox-box ${item.checked ? 'checked' : ''}`} />
+                      <div style={{ flex: 1 }}>
+                        <div className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <span>{item.name}</span>
+                          {item.brand && <span className="text-xs text-muted">({item.brand})</span>}
+                          {item.from_plan && <span className="leftover-badge">{'\uD83D\uDCC5'}</span>}
+                          {item.low_stock && <span>{'\u26A0\uFE0F'}</span>}
+                        </div>
+                        <div className="grocery-item-meta">
+                          {item.quantity && <span className="duration-badge">{item.quantity} {item.quantity_unit}</span>}
+                          {item.channel && <span className="duration-badge">{item.channel}</span>}
+                          {item.stock_qty > 0 && <span className="duration-badge">Stock: {item.stock_qty}</span>}
+                          {item.estimated_cost && <span className="duration-badge">{'\u20A8'}{item.estimated_cost}</span>}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
             );
           })}
 
+          {/* Checked items */}
           {checked.length > 0 && (
             <div className="grocery-done-group">
               <div className="grocery-done-header" onClick={() => setShowDone(!showDone)}>
@@ -251,10 +252,11 @@ export default function Grocery({ showToast }) {
             </div>
           )}
 
+          {/* Actions */}
           <div className="action-row">
             {checked.length > 0 && <button className="btn btn-secondary btn-sm" onClick={handleClearChecked}>Clear checked</button>}
             {grocery.length > 0 && <button className="btn btn-ghost btn-sm" onClick={handleClearAll}>Clear all</button>}
-            {unchecked.length > 0 && <button className="btn btn-ghost btn-sm" onClick={exportList}>Export list</button>}
+            {totalUnchecked > 0 && <button className="btn btn-ghost btn-sm" onClick={exportList}>Export list</button>}
           </div>
         </>
       )}

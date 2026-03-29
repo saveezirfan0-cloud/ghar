@@ -57,29 +57,18 @@ export const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 export const MEAL_SLOTS = ['breakfast', 'dinner'];
 export const MEAL_SLOTS_RAMADAN = ['sehri', 'iftar'];
 
-export const MEAL_CATEGORIES = ['All', 'Daal', 'Salan', 'Pulao', 'Pasta', 'Breakfast', 'Snack', 'Other'];
+export const DEFAULT_MEAL_CATEGORIES = ['Daal', 'Salan', 'Pulao', 'Pasta', 'Breakfast', 'Snack', 'Other'];
 
-export const GROCERY_CATEGORIES = ['Produce', 'Dairy', 'Meat', 'Pantry', 'Bakery', 'Spices', 'Other'];
+export const GROCERY_CATEGORIES = ['Produce', 'Fruit & Vegetable', 'Dairy', 'Meat', 'Pantry', 'Bakery', 'Spices', 'Frozen', 'Beverages', 'Other'];
+
+export const QUANTITY_UNITS = ['pc', 'kg', 'g', 'ltr', 'ml', 'dozen', 'pack', 'bottle', 'bag', 'bunch'];
+
+export const DEFAULT_GROCERY_CHANNELS = ['Any', 'Grocery Store', 'Supermarket', 'Online', 'Wholesale', 'Sabzi Mandi'];
 
 export const ENERGY_LEVELS = [
   { value: 'high', label: 'High', icon: '\uD83D\uDD25' },
   { value: 'medium', label: 'Medium', icon: '\u26A1' },
   { value: 'low', label: 'Low', icon: '\uD83C\uDF19' }
-];
-
-export const DEFAULT_DAILY_CHORES = [
-  { name: 'Dishes', durationMinutes: 10, energyLevel: 'medium' },
-  { name: 'Wipe kitchen counter', durationMinutes: 3, energyLevel: 'low' },
-  { name: 'Make bed', durationMinutes: 2, energyLevel: 'low' },
-  { name: 'Quick tidy (living room)', durationMinutes: 5, energyLevel: 'low' }
-];
-
-export const DEFAULT_WEEKLY_CHORES = [
-  { name: 'Mop floors', durationMinutes: 20, energyLevel: 'high' },
-  { name: 'Clean bathroom', durationMinutes: 25, energyLevel: 'high' },
-  { name: 'Laundry', durationMinutes: 15, energyLevel: 'medium' },
-  { name: 'Change bed linen', durationMinutes: 10, energyLevel: 'medium' },
-  { name: 'Vacuum', durationMinutes: 15, energyLevel: 'medium' }
 ];
 
 // ── Motivational nudges ──
@@ -117,8 +106,7 @@ export function suggestMeal(meals, mealMemory, ramadanMode) {
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   let candidates = meals.filter((m) => {
-    if (m.lastCooked && m.lastCooked > sevenDaysAgo) return false;
-    if (mealMemory && mealMemory.recentlyCooked && mealMemory.recentlyCooked.includes(m.id)) return false;
+    if (m.last_cooked && m.last_cooked > sevenDaysAgo) return false;
     return true;
   });
 
@@ -131,13 +119,7 @@ export function suggestMeal(meals, mealMemory, ramadanMode) {
     if (lighter.length > 0) candidates = lighter;
   }
 
-  const weighted = [];
-  for (const meal of candidates) {
-    const weight = meal.rating >= 4 ? 3 : 1;
-    for (let i = 0; i < weight; i++) weighted.push(meal);
-  }
-
-  return weighted[Math.floor(Math.random() * weighted.length)];
+  return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
 // ── Quick-add type detection ──
@@ -155,4 +137,30 @@ export function isIOS() {
 
 export function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+// ── Check what meals can be made from pantry ──
+export function checkMealAvailability(meal, pantryItems) {
+  if (!meal.ingredients || meal.ingredients.length === 0) {
+    return { canMake: true, available: [], missing: [] };
+  }
+
+  const pantryNames = new Set(pantryItems.map((p) => p.name.toLowerCase().trim()));
+  const available = [];
+  const missing = [];
+
+  for (const ing of meal.ingredients) {
+    const lower = ing.toLowerCase().trim();
+    if (pantryNames.has(lower)) {
+      available.push(ing);
+    } else {
+      missing.push(ing);
+    }
+  }
+
+  return {
+    canMake: missing.length === 0,
+    available,
+    missing
+  };
 }

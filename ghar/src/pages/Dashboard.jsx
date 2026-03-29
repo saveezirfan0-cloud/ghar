@@ -150,7 +150,7 @@ export default function Dashboard({ setActivePage, showToast, onSettingsOpen }) 
           {isIOS() ? (
             <p>Tap the share icon <strong>(</strong>{'\u2191'}<strong>)</strong> at the bottom of Safari, then tap <strong>"Add to Home Screen"</strong>.</p>
           ) : (
-            <p>Tap the menu <strong>(\u22EE)</strong> in your browser, then tap <strong>"Install app"</strong> or <strong>"Add to Home Screen"</strong>.</p>
+            <p>Tap the menu <strong>(&#8942;)</strong> in your browser, then tap <strong>"Install app"</strong> or <strong>"Add to Home Screen"</strong>.</p>
           )}
           <div className="install-banner-actions">
             <button className="btn btn-secondary btn-sm" onClick={dismissInstall}>Dismiss</button>

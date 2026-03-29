@@ -28,6 +28,36 @@
   --font-body: 'Plus Jakarta Sans', system-ui, sans-serif;
 }
 
+/* ── Dark Mode ── */
+[data-theme="dark"] {
+  --bg: #1A1412;
+  --surface: #2A2220;
+  --surface-2: #352E2A;
+  --accent: #D4825A;
+  --accent-light: #3A2820;
+  --accent-text: #E8A882;
+  --text: #F0E6DC;
+  --text-2: #B8A898;
+  --text-3: #7A6C5E;
+  --border: #3E3530;
+  --success: #6AAE6E;
+  --success-light: #1E3020;
+  --warning: #D4962A;
+  --warning-light: #302818;
+  --danger: #D45050;
+  --danger-light: #301818;
+}
+
+[data-theme="dark"] .bottom-nav {
+  background: var(--surface);
+}
+
+[data-theme="dark"] .toast {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
 /* ── Reset ── */
 *, *::before, *::after {
   margin: 0;
@@ -1407,4 +1437,110 @@ ul, ol {
   font-family: var(--font-display);
   font-size: 1.1rem;
   color: var(--text-2);
+}
+
+/* ═══════════════════════════════════════
+   MORE PAGE
+   ═══════════════════════════════════════ */
+
+.more-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  margin-bottom: 12px;
+  transition: transform 0.1s;
+}
+
+.more-card:active {
+  transform: scale(0.98);
+}
+
+.more-card-icon {
+  font-size: 1.8rem;
+  flex-shrink: 0;
+}
+
+.more-card-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin-bottom: 2px;
+}
+
+.more-card-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-2);
+}
+
+.more-card-arrow {
+  margin-left: auto;
+  font-size: 1.5rem;
+  color: var(--text-3);
+}
+
+/* ═══════════════════════════════════════
+   INGREDIENT TAGS
+   ═══════════════════════════════════════ */
+
+.ingredient-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ingredient-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.ingredient-tag.in-pantry {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.ingredient-tag.missing {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.availability-badge {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  margin-bottom: 12px;
+}
+
+.availability-badge.available {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.availability-badge.not-available {
+  background: var(--warning-light);
+  color: var(--warning);
+}
+
+/* ═══════════════════════════════════════
+   GROCERY ITEM META
+   ═══════════════════════════════════════ */
+
+.grocery-item-row {
+  display: flex;
+  align-items: center;
+}
+
+.grocery-item-meta {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
 }

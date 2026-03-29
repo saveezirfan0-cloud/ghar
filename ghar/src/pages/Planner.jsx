@@ -2,11 +2,13 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import Sheet from '../components/Sheet';
-import { DAYS, MEAL_CATEGORIES, getDayName } from '../utils/helpers';
+import { DAYS, DEFAULT_MEAL_CATEGORIES, getDayName } from '../utils/helpers';
 
 export default function Planner({ showToast, setActivePage }) {
   const { profile } = useAuth();
   const { meals, plan, setPlanSlot, clearPlanSlot, planNotes, setPlanNote, grocery, pantry, addGroceryBatch } = useData();
+
+  const mealCategories = ['All', ...(profile?.meal_categories || DEFAULT_MEAL_CATEGORIES)];
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSlot, setPickerSlot] = useState(null);
@@ -165,7 +167,7 @@ export default function Planner({ showToast, setActivePage }) {
         </div>
 
         <div className="pill-row mb-12">
-          {MEAL_CATEGORIES.map((cat) => (
+          {mealCategories.map((cat) => (
             <span key={cat} className={`pill ${filterCat === cat ? 'active' : ''}`} onClick={() => setFilterCat(cat)}>{cat}</span>
           ))}
         </div>

@@ -133,20 +133,28 @@ export function DataProvider({ children }) {
   }
 
   async function addGroceryItem(item) {
-    const row = { user_id: user.id, name: item.name, category: item.category || 'Other', checked: false, from_plan: item.fromPlan || item.from_plan || false, in_pantry: item.inPantry || item.in_pantry || false, low_stock: item.lowStock || item.low_stock || false, estimated_cost: item.estimatedCost || item.estimated_cost || null };
+    const row = {
+      user_id: user.id,
+      name: item.name,
+      category: item.category || 'Other',
+      brand: item.brand || '',
+      quantity: item.quantity || null,
+      quantity_unit: item.quantity_unit || 'pc',
+      channel: item.channel || '',
+      stock_qty: item.stock_qty || 0,
+      checked: false,
+      from_plan: item.fromPlan || item.from_plan || false,
+      in_pantry: item.inPantry || item.in_pantry || false,
+      low_stock: item.lowStock || item.low_stock || false,
+      estimated_cost: item.estimatedCost || item.estimated_cost || null
+    };
     const { data, error } = await supabase.from('grocery_items').insert(row).select().single();
     if (!error && data) setGroceryState((prev) => [data, ...prev]);
     return { data, error };
   }
 
   async function updateGroceryItem(id, updates) {
-    const dbUpdates = {};
-    if ('checked' in updates) dbUpdates.checked = updates.checked;
-    if ('name' in updates) dbUpdates.name = updates.name;
-    if ('category' in updates) dbUpdates.category = updates.category;
-    if ('estimated_cost' in updates) dbUpdates.estimated_cost = updates.estimated_cost;
-
-    const { data } = await supabase.from('grocery_items').update(dbUpdates).eq('id', id).eq('user_id', user.id).select().single();
+    const { data } = await supabase.from('grocery_items').update(updates).eq('id', id).eq('user_id', user.id).select().single();
     if (data) setGroceryState((prev) => prev.map((g) => g.id === id ? data : g));
   }
 
