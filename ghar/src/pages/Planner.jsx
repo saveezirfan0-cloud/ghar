@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import Sheet from '../components/Sheet';
-import { DAYS, DEFAULT_MEAL_CATEGORIES, getDayName, getMealSlots, slotKey, parseIngredients } from '../utils/helpers';
+import { DAYS, DEFAULT_MEAL_CATEGORIES, GROCERY_CATEGORIES, getDayName, getMealSlots, slotKey, parseIngredients } from '../utils/helpers';
 
 const SKIP_REASONS = ['Party', 'Wedding', 'Dine out', 'Holiday', 'Travelling', 'Guests coming', 'Other'];
 
@@ -28,8 +28,9 @@ export default function Planner({ showToast, setActivePage }) {
   const [addSlotOpen, setAddSlotOpen] = useState(false);
   const [newSlotName, setNewSlotName] = useState('');
 
-  // Day menu
-  const [dayMenu, setDayMenu] = useState(null);
+  // Grocery review
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewItems, setReviewItems] = useState([]);
 
   const todayDay = getDayName();
 
@@ -111,10 +112,12 @@ export default function Planner({ showToast, setActivePage }) {
     showToast(`"${slot}" slot removed`);
   }
 
-  async function generateGroceryList() {
-    const pantryNames = new Set(pantry.map((p) => p.name.toLowerCase()));
-    const existingNames = new Set(grocery.map((g) => g.name.toLowerCase()));
-    const newItems = [];
+  function prepareGroceryReview() {
+    const pantryNames = new Set(pantry.map((p) => p.name.toLowerCase().trim()));
+    const groceryNames = new Set(grocery.map((g) => g.name.toLowerCase().trim()));
+    const seen = new Set();
+    const items = [];
+
     for (const key of Object.keys(plan)) {
       const entry = plan[key];
       if (!entry || !entry.mealId) continue;
@@ -122,16 +125,44 @@ export default function Planner({ showToast, setActivePage }) {
       if (!meal) continue;
       const ingredients = parseIngredients(meal);
       for (const ing of ingredients) {
-        const lower = ing.name.toLowerCase();
-        if (!pantryNames.has(lower) && !existingNames.has(lower)) {
-          existingNames.add(lower);
-          newItems.push({ name: `${ing.name}${ing.qty ? ` (${ing.qty}${ing.unit})` : ''}`, category: 'Other' });
-        }
+        const lower = ing.name.toLowerCase().trim();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        const inPantry = pantryNames.has(lower);
+        const alreadyOnList = groceryNames.has(lower);
+        items.push({
+          name: ing.name, qty: ing.qty || '', unit: ing.unit || '',
+          category: 'Other', inPantry, alreadyOnList,
+          selected: !inPantry && !alreadyOnList
+        });
       }
     }
-    if (newItems.length === 0) { showToast('No new items to add'); return; }
-    await addGroceryBatch(newItems);
-    showToast(`${newItems.length} item${newItems.length > 1 ? 's' : ''} added to your list`);
+
+    if (items.length === 0) { showToast('No ingredients found in planned meals'); return; }
+    setReviewItems(items);
+    setReviewOpen(true);
+  }
+
+  function toggleReviewItem(index) {
+    setReviewItems((prev) => prev.map((item, i) => i === index ? { ...item, selected: !item.selected } : item));
+  }
+
+  function updateReviewCategory(index, category) {
+    setReviewItems((prev) => prev.map((item, i) => i === index ? { ...item, category } : item));
+  }
+
+  async function confirmGroceryAdd() {
+    const toAdd = reviewItems.filter((item) => item.selected && !item.inPantry && !item.alreadyOnList);
+    if (toAdd.length === 0) { showToast('No items selected to add'); return; }
+    const batchItems = toAdd.map((item) => ({
+      name: item.name,
+      category: item.category,
+      quantity: item.qty ? parseFloat(item.qty) : null,
+      quantity_unit: item.unit || 'pc'
+    }));
+    await addGroceryBatch(batchItems);
+    showToast(`${toAdd.length} item${toAdd.length > 1 ? 's' : ''} added to grocery`);
+    setReviewOpen(false);
     setTimeout(() => setActivePage('grocery'), 1500);
   }
 
@@ -231,7 +262,7 @@ export default function Planner({ showToast, setActivePage }) {
       })}
 
       <div className="sticky-bottom">
-        <button className="btn btn-primary btn-block" onClick={generateGroceryList}>{'\uD83D\uDED2'} Generate Grocery List</button>
+        <button className="btn btn-primary btn-block" onClick={prepareGroceryReview}>{'\uD83D\uDED2'} Generate Grocery List</button>
       </div>
 
       {/* Meal Picker Sheet */}
@@ -293,6 +324,76 @@ export default function Planner({ showToast, setActivePage }) {
           </div>
         </div>
         <button className="btn btn-primary btn-block" onClick={addNewSlot} disabled={!newSlotName.trim()}>Add Slot</button>
+      </Sheet>
+
+      {/* Grocery Review Sheet */}
+      <Sheet open={reviewOpen} onClose={() => setReviewOpen(false)} title="Review Grocery Items">
+        {(() => {
+          const inPantryItems = reviewItems.filter((i) => i.inPantry);
+          const onListItems = reviewItems.filter((i) => i.alreadyOnList);
+          const toAddItems = reviewItems.filter((i) => !i.inPantry && !i.alreadyOnList);
+          const selectedCount = reviewItems.filter((i) => i.selected && !i.inPantry && !i.alreadyOnList).length;
+
+          return (
+            <div style={{ maxHeight: '60dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              {/* To Add section */}
+              {toAddItems.length > 0 && (
+                <div className="mb-12">
+                  <div className="section-header">To Add ({selectedCount} selected)</div>
+                  {toAddItems.map((item) => {
+                    const idx = reviewItems.indexOf(item);
+                    return (
+                      <div key={idx} className="review-item">
+                        <div className={`checkbox-box ${item.selected ? 'checked' : ''}`} onClick={() => toggleReviewItem(idx)} />
+                        <div style={{ flex: 1 }}>
+                          <div className="text-sm fw-600">{item.name}</div>
+                          {(item.qty || item.unit) && <div className="text-xs text-muted">{item.qty} {item.unit}</div>}
+                        </div>
+                        <select className="form-select" value={item.category} onChange={(e) => updateReviewCategory(idx, e.target.value)} style={{ width: 100, minHeight: 36, fontSize: '0.75rem', padding: '4px 8px' }} onClick={(e) => e.stopPropagation()}>
+                          {GROCERY_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* In Pantry section */}
+              {inPantryItems.length > 0 && (
+                <div className="mb-12">
+                  <div className="section-header">{'\u2705'} In Your Pantry ({inPantryItems.length})</div>
+                  {inPantryItems.map((item, i) => (
+                    <div key={i} className="review-item pantry">
+                      <span className="text-sm">{'\u2705'}</span>
+                      <span className="text-sm" style={{ flex: 1 }}>{item.name}</span>
+                      {(item.qty || item.unit) && <span className="text-xs text-muted">{item.qty} {item.unit}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Already on list section */}
+              {onListItems.length > 0 && (
+                <div className="mb-12">
+                  <div className="section-header">{'\uD83D\uDED2'} Already on Grocery List ({onListItems.length})</div>
+                  {onListItems.map((item, i) => (
+                    <div key={i} className="review-item on-list">
+                      <span className="text-sm">{'\uD83D\uDED2'}</span>
+                      <span className="text-sm" style={{ flex: 1 }}>{item.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirmGroceryAdd} disabled={reviewItems.filter((i) => i.selected && !i.inPantry && !i.alreadyOnList).length === 0}>
+            Add {reviewItems.filter((i) => i.selected && !i.inPantry && !i.alreadyOnList).length} to Grocery
+          </button>
+          <button className="btn btn-ghost" onClick={() => setReviewOpen(false)}>Cancel</button>
+        </div>
       </Sheet>
     </div>
   );

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
-import { todayISO, DEFAULT_MEAL_CATEGORIES, DEFAULT_GROCERY_CHANNELS, DEFAULT_MEAL_SLOTS } from '../utils/helpers';
+import { todayISO, DEFAULT_MEAL_CATEGORIES, DEFAULT_GROCERY_CHANNELS, DEFAULT_MEAL_SLOTS, DEFAULT_PANTRY_CATEGORIES } from '../utils/helpers';
 import { requestNotificationPermission } from '../utils/notifications';
+import { supabase } from '../lib/supabase';
 
 export default function Settings({ showToast }) {
   const { user, profile, updateProfile, signOut } = useAuth();
@@ -11,13 +12,18 @@ export default function Settings({ showToast }) {
   const [newCategory, setNewCategory] = useState('');
   const [newChannel, setNewChannel] = useState('');
   const [newSlot, setNewSlot] = useState('');
+  const [newPantryCat, setNewPantryCat] = useState('');
   const [showCategories, setShowCategories] = useState(false);
   const [showChannels, setShowChannels] = useState(false);
   const [showSlots, setShowSlots] = useState(false);
+  const [showPantryCats, setShowPantryCats] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackSending, setFeedbackSending] = useState(false);
 
   const mealCategories = profile?.meal_categories || DEFAULT_MEAL_CATEGORIES;
   const groceryChannels = profile?.grocery_channels || DEFAULT_GROCERY_CHANNELS;
   const mealSlots = profile?.meal_slots || DEFAULT_MEAL_SLOTS;
+  const pantryCategories = profile?.pantry_categories || DEFAULT_PANTRY_CATEGORIES;
 
   function handleExportData() {
     const data = exportAllData();
@@ -193,6 +199,30 @@ export default function Settings({ showToast }) {
             </div>
           )}
         </div>
+
+        {/* Calories & Servings */}
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 8 }}>
+          <div className="toggle-row">
+            <div>
+              <div className="fw-600">Show Calories</div>
+              <div className="text-xs text-muted">Display calories per serving on meals</div>
+            </div>
+            <div className={`toggle-switch ${profile?.show_calories ? 'on' : ''}`} onClick={() => updateProfile({ show_calories: !profile?.show_calories })} />
+          </div>
+          <div className="toggle-row">
+            <div>
+              <div className="fw-600">Cooking for X People</div>
+              <div className="text-xs text-muted">Show total calories based on servings</div>
+            </div>
+            <div className={`toggle-switch ${profile?.show_servings ? 'on' : ''}`} onClick={() => updateProfile({ show_servings: !profile?.show_servings })} />
+          </div>
+          {profile?.show_servings && (
+            <div className="form-group">
+              <label className="form-label">Number of people</label>
+              <input className="form-input" type="number" min="1" max="20" value={profile?.default_servings || 2} onChange={(e) => updateProfile({ default_servings: Math.max(1, parseInt(e.target.value) || 2) })} style={{ width: 100 }} />
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Grocery Settings */}
@@ -251,6 +281,33 @@ export default function Settings({ showToast }) {
         </div>
       </div>
 
+      {/* Pantry Categories */}
+      <div className="card">
+        <div className="card-title">Pantry</div>
+        <div className="flex-between clickable" onClick={() => setShowPantryCats(!showPantryCats)} style={{ minHeight: 48 }}>
+          <div className="fw-600">Pantry Categories</div>
+          <span className="text-muted">{showPantryCats ? '\u25B2' : '\u25BC'}</span>
+        </div>
+        {showPantryCats && (
+          <div className="mt-8">
+            <div className="pill-row mb-12" style={{ flexWrap: 'wrap' }}>
+              {pantryCategories.map((cat) => (
+                <span key={cat} className="pill" style={{ gap: 6 }}>
+                  {cat}
+                  {pantryCategories.length > 1 && (
+                    <span className="clickable" onClick={(e) => { e.stopPropagation(); updateProfile({ pantry_categories: pantryCategories.filter((c) => c !== cat) }); showToast(`"${cat}" removed`); }} style={{ opacity: 0.6, fontSize: '0.7rem' }}>{'\u2715'}</span>
+                  )}
+                </span>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="form-input" placeholder="New category..." value={newPantryCat} onChange={(e) => setNewPantryCat(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newPantryCat.trim() && !pantryCategories.includes(newPantryCat.trim())) { updateProfile({ pantry_categories: [...pantryCategories, newPantryCat.trim()] }); showToast(`"${newPantryCat.trim()}" added`); setNewPantryCat(''); } }} style={{ flex: 1 }} />
+              <button className="btn btn-primary btn-sm" onClick={() => { if (newPantryCat.trim() && !pantryCategories.includes(newPantryCat.trim())) { updateProfile({ pantry_categories: [...pantryCategories, newPantryCat.trim()] }); showToast(`"${newPantryCat.trim()}" added`); setNewPantryCat(''); } }} disabled={!newPantryCat.trim()}>Add</button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Notifications */}
       <div className="card">
         <div className="card-title">Notifications</div>
@@ -264,6 +321,30 @@ export default function Settings({ showToast }) {
             onClick={toggleNotifications}
           />
         </div>
+      </div>
+
+      {/* Feedback */}
+      <div className="card">
+        <div className="card-title">Feedback</div>
+        <p className="text-sm text-muted mb-12">Got ideas, found a bug, or want a feature? Tell us!</p>
+        <div className="form-group">
+          <textarea className="form-input" rows={3} placeholder="What's on your mind?" value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} style={{ minHeight: 80, resize: 'vertical' }} />
+        </div>
+        <button className="btn btn-secondary btn-block" onClick={async () => {
+          if (!feedbackText.trim()) return;
+          setFeedbackSending(true);
+          try {
+            await supabase.from('feedback').insert({ user_id: user.id, message: feedbackText.trim() });
+            showToast('Thanks for your feedback!');
+            setFeedbackText('');
+          } catch {
+            showToast('Could not send feedback. Try again.');
+          }
+          setFeedbackSending(false);
+        }} disabled={!feedbackText.trim() || feedbackSending}>
+          {feedbackSending ? 'Sending...' : 'Submit Feedback'}
+        </button>
+        <p className="text-xs text-muted mt-8">Your feedback is saved to our database and helps us prioritize features.</p>
       </div>
 
       {/* Data */}

@@ -22,7 +22,12 @@ export default function Meals({ showToast }) {
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState('Other');
   const [formUrl, setFormUrl] = useState('');
+  const [formCalories, setFormCalories] = useState('');
   const [formIngredients, setFormIngredients] = useState([{ name: '', qty: '', unit: '' }]);
+
+  const showCalories = profile?.show_calories || false;
+  const showServings = profile?.show_servings || false;
+  const defaultServings = profile?.default_servings || 2;
 
   const filtered = useMemo(() => {
     if (activeCategory === 'All') return meals;
@@ -60,14 +65,15 @@ export default function Meals({ showToast }) {
       name: formName.trim(),
       category: formCategory,
       recipeUrl: formUrl.trim(),
-      ingredients_json: cleanIngredients
+      ingredients_json: cleanIngredients,
+      calories_per_serving: formCalories ? parseInt(formCalories) : null
     });
     showToast(`"${formName.trim()}" added to meals`);
     resetForm();
   }
 
   function resetForm() {
-    setFormName(''); setFormCategory('Other'); setFormUrl('');
+    setFormName(''); setFormCategory('Other'); setFormUrl(''); setFormCalories('');
     setFormIngredients([{ name: '', qty: '', unit: '' }]);
     setShowForm(false);
   }
@@ -139,6 +145,13 @@ export default function Meals({ showToast }) {
             <label className="form-label">Recipe URL (optional)</label>
             <input className="form-input" placeholder="https://..." value={formUrl} onChange={(e) => setFormUrl(e.target.value)} />
           </div>
+
+          {showCalories && (
+            <div className="form-group">
+              <label className="form-label">Calories per serving (optional)</label>
+              <input className="form-input" type="number" placeholder="e.g. 350" value={formCalories} onChange={(e) => setFormCalories(e.target.value)} />
+            </div>
+          )}
 
           {/* Ingredient line items */}
           <div className="form-group">
@@ -226,6 +239,12 @@ export default function Meals({ showToast }) {
                     </div>
                   )}
 
+                  {showCalories && meal.calories_per_serving && (
+                    <div className="text-sm mb-8" style={{ color: 'var(--accent-text)' }}>
+                      {'\uD83D\uDD25'} {meal.calories_per_serving} cal/serving
+                      {showServings && <span className="text-muted"> &middot; {meal.calories_per_serving * defaultServings} cal for {defaultServings} people</span>}
+                    </div>
+                  )}
                   {meal.last_cooked && <div className="text-sm text-muted mb-8">Last cooked: {formatDate(meal.last_cooked)}</div>}
 
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

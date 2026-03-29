@@ -1890,3 +1890,24 @@ input, select, textarea {
 .suggestion-item:active {
   opacity: 0.7;
 }
+
+/* ═══════════════════════════════════════
+   GROCERY REVIEW ITEMS
+   ═══════════════════════════════════════ */
+
+.review-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--surface-2);
+  min-height: 48px;
+}
+
+.review-item.pantry {
+  opacity: 0.7;
+}
+
+.review-item.on-list {
+  opacity: 0.5;
+}

@@ -52,11 +52,11 @@ export function DataProvider({ children, guestMode }) {
 
   async function addMeal(meal) {
     if (guestMode) {
-      const newMeal = { id: guestId(), name: meal.name, category: meal.category || 'Other', recipe_url: meal.recipeUrl || '', ingredients: meal.ingredients || [], ingredients_json: meal.ingredients_json || [], last_cooked: null, times_cooked: 0, created_at: new Date().toISOString() };
+      const newMeal = { id: guestId(), name: meal.name, category: meal.category || 'Other', recipe_url: meal.recipeUrl || '', ingredients: meal.ingredients || [], ingredients_json: meal.ingredients_json || [], calories_per_serving: meal.calories_per_serving || null, last_cooked: null, times_cooked: 0, created_at: new Date().toISOString() };
       setMealsState((prev) => [newMeal, ...prev]);
       return { data: newMeal };
     }
-    const row = { user_id: user.id, name: meal.name, category: meal.category || 'Other', recipe_url: meal.recipeUrl || meal.recipe_url || '', rating: 0, ingredients: (meal.ingredients_json || []).map((i) => i.name), ingredients_json: meal.ingredients_json || [], last_cooked: meal.last_cooked || null, times_cooked: 0 };
+    const row = { user_id: user.id, name: meal.name, category: meal.category || 'Other', recipe_url: meal.recipeUrl || meal.recipe_url || '', rating: 0, ingredients: (meal.ingredients_json || []).map((i) => i.name), ingredients_json: meal.ingredients_json || [], calories_per_serving: meal.calories_per_serving || null, last_cooked: meal.last_cooked || null, times_cooked: 0 };
     const { data, error } = await supabase.from('meals').insert(row).select().single();
     if (!error && data) setMealsState((prev) => [data, ...prev]);
     return { data, error };
@@ -75,6 +75,7 @@ export function DataProvider({ children, guestMode }) {
       dbUpdates.ingredients_json = updates.ingredients_json;
       dbUpdates.ingredients = updates.ingredients_json.map((i) => i.name);
     }
+    if ('calories_per_serving' in updates) dbUpdates.calories_per_serving = updates.calories_per_serving;
     if ('last_cooked' in updates) dbUpdates.last_cooked = updates.last_cooked;
     if ('times_cooked' in updates) dbUpdates.times_cooked = updates.times_cooked;
     const { data, error } = await supabase.from('meals').update(dbUpdates).eq('id', id).eq('user_id', user.id).select().single();
@@ -199,11 +200,11 @@ export function DataProvider({ children, guestMode }) {
 
   async function addGroceryBatch(items) {
     if (guestMode) {
-      const newItems = items.map((item) => ({ id: guestId(), name: item.name, category: item.category || 'Other', brand: '', quantity: null, quantity_unit: 'pc', channel: '', stock_qty: 0, checked: false, from_plan: true, in_pantry: false, low_stock: false, estimated_cost: null }));
+      const newItems = items.map((item) => ({ id: guestId(), name: item.name, category: item.category || 'Other', brand: item.brand || '', quantity: item.quantity || null, quantity_unit: item.quantity_unit || 'pc', channel: item.channel || '', stock_qty: 0, checked: false, from_plan: true, in_pantry: false, low_stock: false, estimated_cost: null }));
       setGroceryState((prev) => [...newItems, ...prev]);
       return newItems;
     }
-    const rows = items.map((item) => ({ user_id: user.id, name: item.name, category: item.category || 'Other', checked: false, from_plan: true, in_pantry: false, low_stock: false, estimated_cost: null }));
+    const rows = items.map((item) => ({ user_id: user.id, name: item.name, category: item.category || 'Other', brand: item.brand || '', quantity: item.quantity || null, quantity_unit: item.quantity_unit || 'pc', channel: item.channel || '', checked: false, from_plan: true, in_pantry: false, low_stock: false, estimated_cost: null }));
     const { data } = await supabase.from('grocery_items').insert(rows).select();
     if (data) setGroceryState((prev) => [...data, ...prev]);
     return data || [];

@@ -1,8 +1,11 @@
 import { useState, useMemo } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
-import { GROCERY_CATEGORIES } from '../utils/helpers';
+import { DEFAULT_PANTRY_CATEGORIES } from '../utils/helpers';
 
 export default function Pantry({ showToast }) {
+  const { profile } = useAuth();
+  const pantryCategories = profile?.pantry_categories || DEFAULT_PANTRY_CATEGORIES;
   const { pantry, addPantryItem, updatePantryItem, deletePantryItem, grocery, addGroceryItem } = useData();
 
   const [showForm, setShowForm] = useState(false);
@@ -98,7 +101,7 @@ export default function Pantry({ showToast }) {
           </div>
           <div className="form-group">
             <select className="form-select" value={formCategory} onChange={(e) => setFormCategory(e.target.value)}>
-              {GROCERY_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {pantryCategories.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>

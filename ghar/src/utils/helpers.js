@@ -58,6 +58,8 @@ export const DEFAULT_MEAL_CATEGORIES = ['Daal', 'Salan', 'Pulao', 'Pasta', 'Brea
 
 export const GROCERY_CATEGORIES = ['Produce', 'Fruit & Vegetable', 'Dairy', 'Meat', 'Pantry', 'Bakery', 'Spices', 'Frozen', 'Beverages', 'Other'];
 
+export const DEFAULT_PANTRY_CATEGORIES = ['Produce', 'Fruit & Vegetable', 'Dairy', 'Meat', 'Pantry', 'Bakery', 'Spices', 'Frozen', 'Beverages', 'Other'];
+
 export const QUANTITY_UNITS = ['pc', 'kg', 'g', 'ltr', 'ml', 'dozen', 'pack', 'bottle', 'bag', 'bunch'];
 
 export const INGREDIENT_UNITS = ['', 'g', 'kg', 'ml', 'ltr', 'cup', 'tbsp', 'tsp', 'pc', 'bunch', 'pack', 'can', 'slice'];
