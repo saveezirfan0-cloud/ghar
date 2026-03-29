@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import Branding from '../components/Branding';
 
 export default function Auth({ onGuestMode }) {
   const { signIn, signUp, resetPassword } = useAuth();
@@ -122,7 +123,7 @@ export default function Auth({ onGuestMode }) {
 
         {/* Footer */}
         <div className="auth-footer">
-          Made for Love with Love by <strong>Skofi</strong>
+          <Branding />
         </div>
       </div>
     </div>

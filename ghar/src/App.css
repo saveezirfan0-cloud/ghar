@@ -1929,13 +1929,21 @@ input, select, textarea {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--surface-2);
-  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  min-height: 48px;
 }
 
-.running-item:last-of-type {
-  border-bottom: none;
+.running-item.need {
+  background: var(--danger-light);
+  border: 1px solid var(--danger);
+  border-opacity: 0.3;
+}
+
+.running-item.stocked {
+  background: var(--success-light);
+  opacity: 0.7;
 }
 
 /* ═══════════════════════════════════════
@@ -1947,4 +1955,26 @@ input, select, textarea {
   font-size: 1.5rem;
   font-weight: 700;
   margin-bottom: 4px;
+}
+
+/* ═══════════════════════════════════════
+   SKOFI BRANDING
+   ═══════════════════════════════════════ */
+
+.skofi-branding {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-3);
+  padding: 16px 0;
+}
+
+.skofi-link {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.skofi-link:hover,
+.skofi-link:active {
+  text-decoration: underline;
 }

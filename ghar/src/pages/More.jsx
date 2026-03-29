@@ -1,5 +1,6 @@
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
+import Branding from '../components/Branding';
 
 export default function More({ setActivePage }) {
   const { profile } = useAuth();
@@ -55,6 +56,8 @@ export default function More({ setActivePage }) {
           <span className="more-card-arrow">{'\u203A'}</span>
         </div>
       ))}
+
+      <Branding />
     </div>
   );
 }

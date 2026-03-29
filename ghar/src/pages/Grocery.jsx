@@ -212,30 +212,62 @@ export default function Grocery({ showToast }) {
       {recurring.length > 0 && (
         <div className="running-items-section mb-16">
           <div className="flex-between clickable" onClick={() => setShowRunning(!showRunning)} style={{ marginBottom: 8 }}>
-            <div className="section-header" style={{ padding: 0 }}>{'\uD83D\uDD04'} Running Items ({recurring.length})</div>
+            <div className="section-header" style={{ padding: 0 }}>{'\uD83D\uDD04'} Running Items</div>
             <span className="text-xs text-muted">{showRunning ? '\u25B2' : '\u25BC'}</span>
           </div>
-          {showRunning && recurring.map((item) => (
-            <div key={item.id} className="running-item">
-              <div className={`checkbox-box ${item.checked ? 'checked' : ''}`} onClick={() => toggleItem(item.id)} />
-              <div style={{ flex: 1 }}>
-                <div className={`text-sm fw-600 ${item.checked ? 'checkbox-label checked' : ''}`}>
-                  {item.name}
-                  {item.brand && <span className="text-xs text-muted"> ({item.brand})</span>}
+          {showRunning && (
+            <>
+              {/* Need to buy */}
+              {recurring.filter((i) => !i.checked).length > 0 && (
+                <div className="mb-8">
+                  <div className="text-xs fw-600 text-muted mb-8">NEED TO BUY</div>
+                  {recurring.filter((i) => !i.checked).map((item) => (
+                    <div key={item.id} className="running-item need">
+                      <div style={{ flex: 1 }}>
+                        <div className="text-sm fw-600">
+                          {item.name}
+                          {item.brand && <span className="text-xs text-muted"> ({item.brand})</span>}
+                        </div>
+                        {item.quantity && <div className="text-xs text-muted">{item.quantity} {item.quantity_unit}</div>}
+                      </div>
+                      <button className="btn btn-primary btn-sm" onClick={() => toggleItem(item.id)} style={{ fontSize: '0.75rem', padding: '6px 12px', minHeight: 32 }}>
+                        Bought
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                {item.quantity && <div className="text-xs text-muted">{item.quantity} {item.quantity_unit}</div>}
-              </div>
-              {item.checked && (
-                <button className="btn btn-secondary btn-sm" onClick={() => toggleItem(item.id)} style={{ fontSize: '0.7rem', padding: '4px 8px', minHeight: 28 }}>
-                  Need again
-                </button>
               )}
-              <button className="btn btn-ghost btn-sm" onClick={async () => { await updateGroceryItem(item.id, { is_recurring: false }); showToast('Removed from running items'); }} style={{ padding: '4px', minHeight: 28, fontSize: '0.7rem', color: 'var(--text-3)' }}>
-                {'\u2715'}
-              </button>
-            </div>
-          ))}
-          <p className="text-xs text-muted mt-8">Running items stay on your list. Check them off when bought, tap "Need again" to restock.</p>
+
+              {/* Stocked / bought */}
+              {recurring.filter((i) => i.checked).length > 0 && (
+                <div>
+                  <div className="text-xs fw-600 text-muted mb-8">STOCKED</div>
+                  {recurring.filter((i) => i.checked).map((item) => (
+                    <div key={item.id} className="running-item stocked">
+                      <div style={{ flex: 1 }}>
+                        <div className="text-sm" style={{ color: 'var(--text-3)' }}>
+                          {'\u2705'} {item.name}
+                          {item.brand && <span className="text-xs"> ({item.brand})</span>}
+                        </div>
+                      </div>
+                      <button className="btn btn-ghost btn-sm" onClick={() => toggleItem(item.id)} style={{ fontSize: '0.7rem', padding: '4px 10px', minHeight: 28, color: 'var(--danger)' }}>
+                        Need again
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Manage */}
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                {recurring.some((i) => i.checked) && (
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: '0.7rem' }} onClick={async () => { for (const item of recurring.filter((i) => i.checked)) { await updateGroceryItem(item.id, { checked: false }); } showToast('All running items set to "Need"'); }}>
+                    Mark all as needed
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

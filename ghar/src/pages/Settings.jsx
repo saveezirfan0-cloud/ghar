@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
+import Branding from '../components/Branding';
 import { todayISO, DEFAULT_MEAL_CATEGORIES, DEFAULT_GROCERY_CHANNELS, DEFAULT_MEAL_SLOTS, DEFAULT_PANTRY_CATEGORIES } from '../utils/helpers';
 import { requestNotificationPermission } from '../utils/notifications';
 import { supabase } from '../lib/supabase';
@@ -358,8 +359,9 @@ export default function Settings({ showToast }) {
         </button>
       </div>
 
-      <div className="text-xs text-muted" style={{ textAlign: 'center', marginTop: 24, marginBottom: 24 }}>
-        Ghar v2.1.0
+      <div style={{ marginTop: 24, marginBottom: 24 }}>
+        <div className="text-xs text-muted" style={{ textAlign: 'center', marginBottom: 8 }}>Ghar v2.2.0</div>
+        <Branding />
       </div>
     </div>
   );
