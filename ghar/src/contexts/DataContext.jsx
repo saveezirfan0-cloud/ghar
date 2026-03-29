@@ -159,11 +159,11 @@ export function DataProvider({ children, guestMode }) {
 
   async function addGroceryItem(item) {
     if (guestMode) {
-      const newItem = { id: guestId(), name: item.name, category: item.category || 'Other', brand: item.brand || '', quantity: item.quantity || null, quantity_unit: item.quantity_unit || 'pc', channel: item.channel || '', stock_qty: item.stock_qty || 0, checked: false, from_plan: item.fromPlan || false, in_pantry: item.inPantry || false, low_stock: item.lowStock || false, estimated_cost: item.estimatedCost || null };
+      const newItem = { id: guestId(), name: item.name, category: item.category || 'Other', brand: item.brand || '', quantity: item.quantity || null, quantity_unit: item.quantity_unit || 'pc', channel: item.channel || '', stock_qty: item.stock_qty || 0, checked: false, from_plan: item.fromPlan || false, in_pantry: item.inPantry || false, low_stock: item.lowStock || false, estimated_cost: item.estimatedCost || null, is_recurring: item.is_recurring || false };
       setGroceryState((prev) => [newItem, ...prev]);
       return { data: newItem };
     }
-    const row = { user_id: user.id, name: item.name, category: item.category || 'Other', brand: item.brand || '', quantity: item.quantity || null, quantity_unit: item.quantity_unit || 'pc', channel: item.channel || '', stock_qty: item.stock_qty || 0, checked: false, from_plan: item.fromPlan || item.from_plan || false, in_pantry: item.inPantry || item.in_pantry || false, low_stock: item.lowStock || item.low_stock || false, estimated_cost: item.estimatedCost || item.estimated_cost || null };
+    const row = { user_id: user.id, name: item.name, category: item.category || 'Other', brand: item.brand || '', quantity: item.quantity || null, quantity_unit: item.quantity_unit || 'pc', channel: item.channel || '', stock_qty: item.stock_qty || 0, checked: false, from_plan: item.fromPlan || item.from_plan || false, in_pantry: item.inPantry || item.in_pantry || false, low_stock: item.lowStock || item.low_stock || false, estimated_cost: item.estimatedCost || item.estimated_cost || null, is_recurring: item.is_recurring || false };
     const { data, error } = await supabase.from('grocery_items').insert(row).select().single();
     if (!error && data) setGroceryState((prev) => [data, ...prev]);
     return { data, error };

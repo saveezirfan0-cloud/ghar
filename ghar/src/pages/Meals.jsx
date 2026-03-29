@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import Sheet from '../components/Sheet';
-import { formatDate, daysBetween, todayISO, DAYS, DEFAULT_MEAL_CATEGORIES, INGREDIENT_UNITS, checkMealAvailability, parseIngredients, getMealSlots, slotKey } from '../utils/helpers';
+import { formatDate, daysBetween, todayISO, DAYS, DEFAULT_MEAL_CATEGORIES, INGREDIENT_UNITS, GROCERY_CATEGORIES, checkMealAvailability, parseIngredients, getMealSlots, slotKey, suggestMeal } from '../utils/helpers';
 
 export default function Meals({ showToast }) {
   const { profile } = useAuth();
@@ -17,6 +17,14 @@ export default function Meals({ showToast }) {
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const [cookPickerOpen, setCookPickerOpen] = useState(false);
   const [cookPickerMeal, setCookPickerMeal] = useState(null);
+
+  // Missing ingredients review
+  const [missingReviewOpen, setMissingReviewOpen] = useState(false);
+  const [missingItems, setMissingItems] = useState([]);
+
+  // Meal suggestion
+  const [suggestionOpen, setSuggestionOpen] = useState(false);
+  const [suggestedMeal, setSuggestedMeal] = useState(null);
 
   // Form
   const [formName, setFormName] = useState('');
@@ -45,6 +53,16 @@ export default function Meals({ showToast }) {
     }
     return null;
   }, [meals, nudgeDismissed]);
+
+  // Meals sorted by "staleness" for suggestions
+  const mealSuggestions = useMemo(() => {
+    if (meals.length === 0) return [];
+    const today = todayISO();
+    return [...meals].map((m) => ({
+      ...m,
+      daysSinceCooked: m.last_cooked ? daysBetween(m.last_cooked, today) : 999,
+    })).sort((a, b) => b.daysSinceCooked - a.daysSinceCooked).slice(0, 5);
+  }, [meals]);
 
   function addIngredientRow() {
     setFormIngredients((prev) => [...prev, { name: '', qty: '', unit: '' }]);
@@ -97,18 +115,62 @@ export default function Meals({ showToast }) {
     setCookPickerMeal(null);
   }
 
-  async function addMissingToGrocery(missing) {
+  function openMissingReview(missing) {
     const existingNames = new Set(grocery.map((g) => g.name.toLowerCase()));
-    const newItems = missing.filter((m) => !existingNames.has(m.name.toLowerCase())).map((m) => ({ name: `${m.name}${m.qty ? ` (${m.qty}${m.unit})` : ''}`, category: 'Other' }));
-    if (newItems.length === 0) { showToast('All items already in grocery list'); return; }
-    await addGroceryBatch(newItems);
-    showToast(`${newItems.length} item${newItems.length > 1 ? 's' : ''} added to grocery`);
+    const items = missing.map((m) => ({
+      name: m.name, qty: m.qty || '', unit: m.unit || '',
+      category: 'Other', selected: !existingNames.has(m.name.toLowerCase()),
+      alreadyOnList: existingNames.has(m.name.toLowerCase())
+    }));
+    setMissingItems(items);
+    setMissingReviewOpen(true);
+  }
+
+  function toggleMissingItem(index) {
+    setMissingItems((prev) => prev.map((item, i) => i === index ? { ...item, selected: !item.selected } : item));
+  }
+
+  function updateMissingCategory(index, category) {
+    setMissingItems((prev) => prev.map((item, i) => i === index ? { ...item, category } : item));
+  }
+
+  async function confirmMissingAdd() {
+    const toAdd = missingItems.filter((i) => i.selected && !i.alreadyOnList);
+    if (toAdd.length === 0) { showToast('No items selected'); return; }
+    await addGroceryBatch(toAdd.map((i) => ({
+      name: i.name, category: i.category,
+      quantity: i.qty ? parseFloat(i.qty) : null,
+      quantity_unit: i.unit || 'pc'
+    })));
+    showToast(`${toAdd.length} item${toAdd.length > 1 ? 's' : ''} added to grocery`);
+    setMissingReviewOpen(false);
+  }
+
+  function handleSuggestMeal() {
+    if (mealSuggestions.length === 0) { showToast('Add some meals first'); return; }
+    setSuggestedMeal(mealSuggestions[0]);
+    setSuggestionOpen(true);
+  }
+
+  function nextSuggestion() {
+    const currentIdx = mealSuggestions.findIndex((m) => m.id === suggestedMeal?.id);
+    const nextIdx = (currentIdx + 1) % mealSuggestions.length;
+    setSuggestedMeal(mealSuggestions[nextIdx]);
   }
 
   return (
     <div className="page">
-      <div className="page-title">Meals</div>
-      <div className="page-subtitle">{meals.length} meal{meals.length !== 1 ? 's' : ''} saved</div>
+      <div className="flex-between mb-8">
+        <div>
+          <div className="page-title">Meals</div>
+          <div className="page-subtitle">{meals.length} meal{meals.length !== 1 ? 's' : ''} saved</div>
+        </div>
+        {meals.length > 0 && (
+          <button className="btn btn-secondary btn-sm" onClick={handleSuggestMeal}>
+            {'\uD83C\uDFB2'} Suggest
+          </button>
+        )}
+      </div>
 
       <div className="pill-row mb-16">
         {mealCategories.map((cat) => (
@@ -230,7 +292,7 @@ export default function Meals({ showToast }) {
                         ) : (
                           <div className="availability-badge not-available">
                             <div>{'\u26A0\uFE0F'} Missing {availability.missing.length} ingredient{availability.missing.length > 1 ? 's' : ''}</div>
-                            <button className="btn btn-primary btn-sm mt-8" onClick={(e) => { e.stopPropagation(); addMissingToGrocery(availability.missing); }}>
+                            <button className="btn btn-primary btn-sm mt-8" onClick={(e) => { e.stopPropagation(); openMissingReview(availability.missing); }}>
                               Add missing to grocery
                             </button>
                           </div>
@@ -276,6 +338,66 @@ export default function Meals({ showToast }) {
             </div>
           </div>
         ))}
+      </Sheet>
+
+      {/* Missing Ingredients Review Sheet */}
+      <Sheet open={missingReviewOpen} onClose={() => setMissingReviewOpen(false)} title="Add to Grocery">
+        <p className="text-sm text-muted mb-12">Review missing ingredients before adding:</p>
+        <div style={{ maxHeight: '50dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          {missingItems.map((item, idx) => (
+            <div key={idx} className="review-item">
+              {item.alreadyOnList ? (
+                <>
+                  <span className="text-sm">{'\uD83D\uDED2'}</span>
+                  <span className="text-sm text-muted" style={{ flex: 1, textDecoration: 'line-through' }}>{item.name}</span>
+                  <span className="text-xs text-muted">Already on list</span>
+                </>
+              ) : (
+                <>
+                  <div className={`checkbox-box ${item.selected ? 'checked' : ''}`} onClick={() => toggleMissingItem(idx)} />
+                  <div style={{ flex: 1 }}>
+                    <div className="text-sm fw-600">{item.name}</div>
+                    {(item.qty || item.unit) && <div className="text-xs text-muted">{item.qty} {item.unit}</div>}
+                  </div>
+                  <select className="form-select" value={item.category} onChange={(e) => updateMissingCategory(idx, e.target.value)} style={{ width: 100, minHeight: 36, fontSize: '0.75rem', padding: '4px 8px' }}>
+                    {GROCERY_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirmMissingAdd} disabled={missingItems.filter((i) => i.selected && !i.alreadyOnList).length === 0}>
+            Add {missingItems.filter((i) => i.selected && !i.alreadyOnList).length} to Grocery
+          </button>
+          <button className="btn btn-ghost" onClick={() => setMissingReviewOpen(false)}>Cancel</button>
+        </div>
+      </Sheet>
+
+      {/* Meal Suggestion Sheet */}
+      <Sheet open={suggestionOpen} onClose={() => setSuggestionOpen(false)} title="Meal Suggestion">
+        {suggestedMeal && (
+          <div style={{ textAlign: 'center' }}>
+            <div className="suggestion-meal-name">{suggestedMeal.name}</div>
+            <div className="pill" style={{ margin: '8px auto', display: 'inline-flex' }}>{suggestedMeal.category}</div>
+            <div className="text-sm text-muted mb-12">
+              {suggestedMeal.daysSinceCooked >= 999
+                ? "You've never cooked this!"
+                : suggestedMeal.daysSinceCooked === 0
+                ? 'Cooked today'
+                : `Last cooked ${suggestedMeal.daysSinceCooked} day${suggestedMeal.daysSinceCooked > 1 ? 's' : ''} ago`}
+            </div>
+            {suggestedMeal.calories_per_serving && showCalories && (
+              <div className="text-sm mb-12">{'\uD83D\uDD25'} {suggestedMeal.calories_per_serving} cal/serving</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" onClick={() => { openCookPicker(suggestedMeal); setSuggestionOpen(false); }}>Cook this week</button>
+              <button className="btn btn-secondary" onClick={nextSuggestion}>Try another</button>
+              <button className="btn btn-ghost" onClick={() => setSuggestionOpen(false)}>Close</button>
+            </div>
+          </div>
+        )}
       </Sheet>
     </div>
   );

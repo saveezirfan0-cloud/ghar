@@ -23,15 +23,20 @@ export default function Grocery({ showToast }) {
   const [formCost, setFormCost] = useState('');
   const [formChannel, setFormChannel] = useState('');
   const [formStockQty, setFormStockQty] = useState('');
+  const [formRecurring, setFormRecurring] = useState(false);
+  const [showRunning, setShowRunning] = useState(true);
+
+  const recurring = useMemo(() => grocery.filter((g) => g.is_recurring), [grocery]);
+  const nonRecurring = useMemo(() => grocery.filter((g) => !g.is_recurring), [grocery]);
 
   const unchecked = useMemo(() => {
-    let list = grocery.filter((g) => !g.checked);
+    let list = nonRecurring.filter((g) => !g.checked);
     if (filterCategory !== 'All') list = list.filter((g) => g.category === filterCategory);
     if (filterChannel !== 'All') list = list.filter((g) => g.channel === filterChannel);
     return list;
-  }, [grocery, filterCategory, filterChannel]);
+  }, [nonRecurring, filterCategory, filterChannel]);
 
-  const checked = useMemo(() => grocery.filter((g) => g.checked), [grocery]);
+  const checked = useMemo(() => nonRecurring.filter((g) => g.checked), [nonRecurring]);
 
   const grouped = useMemo(() => {
     const groups = {};
@@ -58,16 +63,17 @@ export default function Grocery({ showToast }) {
       quantity_unit: formUnit,
       channel: formChannel,
       stock_qty: formStockQty ? parseFloat(formStockQty) : 0,
-      estimatedCost: formCost ? parseFloat(formCost) : null
+      estimatedCost: formCost ? parseFloat(formCost) : null,
+      is_recurring: formRecurring
     });
-    showToast(`"${formName.trim()}" added to list`);
+    showToast(`"${formName.trim()}" added${formRecurring ? ' as running item' : ''}`);
     resetForm();
   }
 
   function resetForm() {
     setFormName(''); setFormCategory('Other'); setFormBrand(''); setFormQty('');
     setFormUnit('pc'); setFormCost(''); setFormChannel(''); setFormStockQty('');
-    setShowForm(false);
+    setFormRecurring(false); setShowForm(false);
   }
 
   async function toggleItem(id) {
@@ -190,10 +196,46 @@ export default function Grocery({ showToast }) {
             </div>
           </div>
 
+          <div className="toggle-row" style={{ paddingTop: 0, paddingBottom: 8 }}>
+            <span className="text-sm">{'\uD83D\uDD04'} Running item (auto-restock)</span>
+            <div className={`toggle-switch ${formRecurring ? 'on' : ''}`} onClick={() => setFormRecurring(!formRecurring)} />
+          </div>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={!formName.trim()}>Add</button>
             <button className="btn btn-ghost btn-sm" onClick={resetForm}>Cancel</button>
           </div>
+        </div>
+      )}
+
+      {/* Running items */}
+      {recurring.length > 0 && (
+        <div className="running-items-section mb-16">
+          <div className="flex-between clickable" onClick={() => setShowRunning(!showRunning)} style={{ marginBottom: 8 }}>
+            <div className="section-header" style={{ padding: 0 }}>{'\uD83D\uDD04'} Running Items ({recurring.length})</div>
+            <span className="text-xs text-muted">{showRunning ? '\u25B2' : '\u25BC'}</span>
+          </div>
+          {showRunning && recurring.map((item) => (
+            <div key={item.id} className="running-item">
+              <div className={`checkbox-box ${item.checked ? 'checked' : ''}`} onClick={() => toggleItem(item.id)} />
+              <div style={{ flex: 1 }}>
+                <div className={`text-sm fw-600 ${item.checked ? 'checkbox-label checked' : ''}`}>
+                  {item.name}
+                  {item.brand && <span className="text-xs text-muted"> ({item.brand})</span>}
+                </div>
+                {item.quantity && <div className="text-xs text-muted">{item.quantity} {item.quantity_unit}</div>}
+              </div>
+              {item.checked && (
+                <button className="btn btn-secondary btn-sm" onClick={() => toggleItem(item.id)} style={{ fontSize: '0.7rem', padding: '4px 8px', minHeight: 28 }}>
+                  Need again
+                </button>
+              )}
+              <button className="btn btn-ghost btn-sm" onClick={async () => { await updateGroceryItem(item.id, { is_recurring: false }); showToast('Removed from running items'); }} style={{ padding: '4px', minHeight: 28, fontSize: '0.7rem', color: 'var(--text-3)' }}>
+                {'\u2715'}
+              </button>
+            </div>
+          ))}
+          <p className="text-xs text-muted mt-8">Running items stay on your list. Check them off when bought, tap "Need again" to restock.</p>
         </div>
       )}
 
