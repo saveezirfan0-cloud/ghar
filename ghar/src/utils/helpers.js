@@ -36,10 +36,6 @@ export function daysBetween(iso1, iso2) {
   return Math.floor((d2 - d1) / (1000 * 60 * 60 * 24));
 }
 
-export function isSameDay(iso1, iso2) {
-  return iso1 && iso2 && iso1.split('T')[0] === iso2.split('T')[0];
-}
-
 export function getLastSunday() {
   const d = new Date();
   d.setDate(d.getDate() - d.getDay());
@@ -54,14 +50,17 @@ export function isSundayEvening() {
 
 // ── Constants ──
 export const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-export const MEAL_SLOTS = ['breakfast', 'dinner'];
-export const MEAL_SLOTS_RAMADAN = ['sehri', 'iftar'];
+
+export const DEFAULT_MEAL_SLOTS = ['Breakfast', 'Dinner'];
+export const RAMADAN_MEAL_SLOTS = ['Sehri', 'Iftar'];
 
 export const DEFAULT_MEAL_CATEGORIES = ['Daal', 'Salan', 'Pulao', 'Pasta', 'Breakfast', 'Snack', 'Other'];
 
 export const GROCERY_CATEGORIES = ['Produce', 'Fruit & Vegetable', 'Dairy', 'Meat', 'Pantry', 'Bakery', 'Spices', 'Frozen', 'Beverages', 'Other'];
 
 export const QUANTITY_UNITS = ['pc', 'kg', 'g', 'ltr', 'ml', 'dozen', 'pack', 'bottle', 'bag', 'bunch'];
+
+export const INGREDIENT_UNITS = ['', 'g', 'kg', 'ml', 'ltr', 'cup', 'tbsp', 'tsp', 'pc', 'bunch', 'pack', 'can', 'slice'];
 
 export const DEFAULT_GROCERY_CHANNELS = ['Any', 'Grocery Store', 'Supermarket', 'Online', 'Wholesale', 'Sabzi Mandi'];
 
@@ -101,24 +100,14 @@ export function getStreakPlant(count) {
 // ── Smart meal suggestion ──
 export function suggestMeal(meals, mealMemory, ramadanMode) {
   if (!meals || meals.length === 0) return null;
-
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  let candidates = meals.filter((m) => {
-    if (m.last_cooked && m.last_cooked > sevenDaysAgo) return false;
-    return true;
-  });
-
+  let candidates = meals.filter((m) => !m.last_cooked || m.last_cooked <= sevenDaysAgo);
   if (candidates.length === 0) candidates = [...meals];
-
   if (ramadanMode) {
-    const lighter = candidates.filter((m) =>
-      ['Breakfast', 'Snack', 'Daal'].includes(m.category)
-    );
+    const lighter = candidates.filter((m) => ['Breakfast', 'Snack', 'Daal'].includes(m.category));
     if (lighter.length > 0) candidates = lighter;
   }
-
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
@@ -139,18 +128,30 @@ export function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
+// ── Parse ingredients (handles both old text[] and new jsonb formats) ──
+export function parseIngredients(meal) {
+  if (meal.ingredients_json && Array.isArray(meal.ingredients_json) && meal.ingredients_json.length > 0) {
+    return meal.ingredients_json;
+  }
+  if (meal.ingredients && Array.isArray(meal.ingredients) && meal.ingredients.length > 0) {
+    return meal.ingredients.map((name) => ({ name, qty: '', unit: '' }));
+  }
+  return [];
+}
+
 // ── Check what meals can be made from pantry ──
 export function checkMealAvailability(meal, pantryItems) {
-  if (!meal.ingredients || meal.ingredients.length === 0) {
-    return { canMake: true, available: [], missing: [] };
+  const ingredients = parseIngredients(meal);
+  if (ingredients.length === 0) {
+    return { canMake: true, available: [], missing: [], ingredients: [] };
   }
 
   const pantryNames = new Set(pantryItems.map((p) => p.name.toLowerCase().trim()));
   const available = [];
   const missing = [];
 
-  for (const ing of meal.ingredients) {
-    const lower = ing.toLowerCase().trim();
+  for (const ing of ingredients) {
+    const lower = ing.name.toLowerCase().trim();
     if (pantryNames.has(lower)) {
       available.push(ing);
     } else {
@@ -158,9 +159,16 @@ export function checkMealAvailability(meal, pantryItems) {
     }
   }
 
-  return {
-    canMake: missing.length === 0,
-    available,
-    missing
-  };
+  return { canMake: missing.length === 0, available, missing, ingredients };
+}
+
+// ── Get meal slots for display ──
+export function getMealSlots(profile) {
+  if (profile?.ramadan_mode) return RAMADAN_MEAL_SLOTS;
+  return profile?.meal_slots || DEFAULT_MEAL_SLOTS;
+}
+
+// ── Slot key for plan storage ──
+export function slotKey(day, slot) {
+  return `${day}-${slot.toLowerCase().replace(/\s+/g, '_')}`;
 }

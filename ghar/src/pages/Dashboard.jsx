@@ -4,7 +4,7 @@ import { useData } from '../contexts/DataContext';
 import {
   todayISO, getDayName, formatDateLong, getStreakPlant,
   isSundayEvening, suggestMeal, isIOS, isStandalone,
-  MEAL_SLOTS, MEAL_SLOTS_RAMADAN
+  getMealSlots, slotKey
 } from '../utils/helpers';
 import { scheduleChoreReminder } from '../utils/notifications';
 
@@ -23,20 +23,17 @@ export default function Dashboard({ setActivePage, showToast, onSettingsOpen }) 
 
   const today = todayISO();
   const dayName = getDayName();
-  const slots = ramadanMode ? MEAL_SLOTS_RAMADAN : MEAL_SLOTS;
-  const slotLabels = ramadanMode
-    ? { sehri: 'Sehri', iftar: 'Iftar' }
-    : { breakfast: 'Breakfast', dinner: 'Dinner' };
+  const mealSlots = getMealSlots(profile);
 
   const todayMeals = useMemo(() => {
-    return slots.map((slot) => {
-      const key = `${dayName}-${slot}`;
+    return mealSlots.map((slot) => {
+      const key = slotKey(dayName, slot);
       const entry = plan[key];
-      if (!entry) return { slot, label: slotLabels[slot], meal: null };
+      if (!entry) return { slot, label: slot, meal: null };
       const meal = meals.find((m) => m.id === entry.mealId);
-      return { slot, label: slotLabels[slot], meal, isLeftover: entry.isLeftover };
+      return { slot, label: slot, meal, isLeftover: entry.isLeftover };
     });
-  }, [plan, meals, dayName, slots, slotLabels]);
+  }, [plan, meals, dayName, mealSlots]);
 
   const dailyChores = useMemo(() => chores.filter((c) => c.type === 'daily'), [chores]);
   const completedDaily = useMemo(() => dailyChores.filter((c) => c.completed).length, [dailyChores]);

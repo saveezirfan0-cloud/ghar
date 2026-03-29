@@ -2,29 +2,27 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import Sheet from '../components/Sheet';
-import { formatDate, daysBetween, todayISO, DAYS, DEFAULT_MEAL_CATEGORIES, checkMealAvailability } from '../utils/helpers';
+import { formatDate, daysBetween, todayISO, DAYS, DEFAULT_MEAL_CATEGORIES, INGREDIENT_UNITS, checkMealAvailability, parseIngredients, getMealSlots, slotKey } from '../utils/helpers';
 
 export default function Meals({ showToast }) {
   const { profile } = useAuth();
   const { meals, addMeal, updateMeal, deleteMeal, plan, setPlanSlot, pantry, addGroceryBatch, grocery } = useData();
 
   const mealCategories = ['All', ...(profile?.meal_categories || DEFAULT_MEAL_CATEGORIES)];
-  const ramadan = profile?.ramadan_mode || false;
+  const mealSlots = getMealSlots(profile);
 
   const [activeCategory, setActiveCategory] = useState('All');
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
-
-  // Cook-this-week picker
   const [cookPickerOpen, setCookPickerOpen] = useState(false);
   const [cookPickerMeal, setCookPickerMeal] = useState(null);
 
-  // Form state
+  // Form
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState('Other');
   const [formUrl, setFormUrl] = useState('');
-  const [formIngredients, setFormIngredients] = useState('');
+  const [formIngredients, setFormIngredients] = useState([{ name: '', qty: '', unit: '' }]);
 
   const filtered = useMemo(() => {
     if (activeCategory === 'All') return meals;
@@ -43,21 +41,34 @@ export default function Meals({ showToast }) {
     return null;
   }, [meals, nudgeDismissed]);
 
+  function addIngredientRow() {
+    setFormIngredients((prev) => [...prev, { name: '', qty: '', unit: '' }]);
+  }
+
+  function updateIngredientRow(index, field, value) {
+    setFormIngredients((prev) => prev.map((row, i) => i === index ? { ...row, [field]: value } : row));
+  }
+
+  function removeIngredientRow(index) {
+    setFormIngredients((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function handleSave() {
     if (!formName.trim()) return;
+    const cleanIngredients = formIngredients.filter((i) => i.name.trim());
     await addMeal({
       name: formName.trim(),
       category: formCategory,
       recipeUrl: formUrl.trim(),
-      rating: 0,
-      ingredients: formIngredients.split(',').map((s) => s.trim()).filter(Boolean)
+      ingredients_json: cleanIngredients
     });
     showToast(`"${formName.trim()}" added to meals`);
     resetForm();
   }
 
   function resetForm() {
-    setFormName(''); setFormCategory('Other'); setFormUrl(''); setFormIngredients('');
+    setFormName(''); setFormCategory('Other'); setFormUrl('');
+    setFormIngredients([{ name: '', qty: '', unit: '' }]);
     setShowForm(false);
   }
 
@@ -73,7 +84,7 @@ export default function Meals({ showToast }) {
   }
 
   async function selectCookSlot(day, slot) {
-    const key = `${day}-${slot}`;
+    const key = slotKey(day, slot);
     await setPlanSlot(key, cookPickerMeal.id, false);
     showToast(`${cookPickerMeal.name} added to ${day} ${slot}`);
     setCookPickerOpen(false);
@@ -82,35 +93,23 @@ export default function Meals({ showToast }) {
 
   async function addMissingToGrocery(missing) {
     const existingNames = new Set(grocery.map((g) => g.name.toLowerCase()));
-    const newItems = missing.filter((m) => !existingNames.has(m.toLowerCase())).map((m) => ({ name: m, category: 'Other' }));
-    if (newItems.length === 0) {
-      showToast('All missing items already in your grocery list');
-      return;
-    }
+    const newItems = missing.filter((m) => !existingNames.has(m.name.toLowerCase())).map((m) => ({ name: `${m.name}${m.qty ? ` (${m.qty}${m.unit})` : ''}`, category: 'Other' }));
+    if (newItems.length === 0) { showToast('All items already in grocery list'); return; }
     await addGroceryBatch(newItems);
     showToast(`${newItems.length} item${newItems.length > 1 ? 's' : ''} added to grocery`);
   }
-
-  const slotTypes = ramadan ? ['sehri', 'iftar'] : ['breakfast', 'dinner'];
-  const slotLabels = ramadan
-    ? { sehri: 'Sehri', iftar: 'Iftar' }
-    : { breakfast: 'Breakfast', dinner: 'Dinner' };
 
   return (
     <div className="page">
       <div className="page-title">Meals</div>
       <div className="page-subtitle">{meals.length} meal{meals.length !== 1 ? 's' : ''} saved</div>
 
-      {/* Category filter */}
       <div className="pill-row mb-16">
         {mealCategories.map((cat) => (
-          <span key={cat} className={`pill ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>
-            {cat}
-          </span>
+          <span key={cat} className={`pill ${activeCategory === cat ? 'active' : ''}`} onClick={() => setActiveCategory(cat)}>{cat}</span>
         ))}
       </div>
 
-      {/* Nudge */}
       {nudge && (
         <div className="nudge-banner">
           <span>{nudge}</span>
@@ -118,7 +117,6 @@ export default function Meals({ showToast }) {
         </div>
       )}
 
-      {/* Add form */}
       {!showForm ? (
         <div className="add-btn" onClick={() => setShowForm(true)}>
           <span>+</span> Add a meal
@@ -141,10 +139,25 @@ export default function Meals({ showToast }) {
             <label className="form-label">Recipe URL (optional)</label>
             <input className="form-input" placeholder="https://..." value={formUrl} onChange={(e) => setFormUrl(e.target.value)} />
           </div>
+
+          {/* Ingredient line items */}
           <div className="form-group">
-            <label className="form-label">Ingredients (comma-separated)</label>
-            <input className="form-input" placeholder="rice, chicken, onion, spices" value={formIngredients} onChange={(e) => setFormIngredients(e.target.value)} />
+            <label className="form-label">Ingredients</label>
+            {formIngredients.map((ing, i) => (
+              <div key={i} className="ingredient-row">
+                <input className="form-input ingredient-name-input" placeholder="Item name" value={ing.name} onChange={(e) => updateIngredientRow(i, 'name', e.target.value)} />
+                <input className="form-input ingredient-qty-input" placeholder="Qty" type="text" value={ing.qty} onChange={(e) => updateIngredientRow(i, 'qty', e.target.value)} />
+                <select className="form-select ingredient-unit-input" value={ing.unit} onChange={(e) => updateIngredientRow(i, 'unit', e.target.value)}>
+                  {INGREDIENT_UNITS.map((u) => <option key={u} value={u}>{u || '-'}</option>)}
+                </select>
+                {formIngredients.length > 1 && (
+                  <button className="btn-icon-remove" onClick={() => removeIngredientRow(i)}>{'\u2715'}</button>
+                )}
+              </div>
+            ))}
+            <button className="btn btn-ghost btn-sm mt-8" onClick={addIngredientRow}>+ Add ingredient</button>
           </div>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-primary" onClick={handleSave} disabled={!formName.trim()}>Save</button>
             <button className="btn btn-ghost" onClick={resetForm}>Cancel</button>
@@ -152,7 +165,6 @@ export default function Meals({ showToast }) {
         </div>
       )}
 
-      {/* Meal list */}
       {filtered.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">{'\uD83C\uDF72'}</div>
@@ -163,14 +175,11 @@ export default function Meals({ showToast }) {
       ) : (
         filtered.map((meal) => {
           const expanded = expandedId === meal.id;
-          const availability = expanded ? checkMealAvailability(meal, pantry) : null;
+          const ingredients = expanded ? parseIngredients(meal) : [];
+          const availability = expanded && ingredients.length > 0 ? checkMealAvailability(meal, pantry) : null;
 
           return (
-            <div
-              key={meal.id}
-              className={`meal-card ${expanded ? 'expanded' : ''}`}
-              onClick={() => setExpandedId(expanded ? null : meal.id)}
-            >
+            <div key={meal.id} className={`meal-card ${expanded ? 'expanded' : ''}`} onClick={() => setExpandedId(expanded ? null : meal.id)}>
               <div className="meal-card-header">
                 <span className="meal-card-name">{meal.name}</span>
                 <span className="pill" style={{ fontSize: '0.7rem', padding: '4px 10px', minHeight: 'auto' }}>{meal.category}</span>
@@ -178,58 +187,50 @@ export default function Meals({ showToast }) {
 
               {expanded && (
                 <div className="meal-card-details">
-                  {/* Recipe link */}
                   {meal.recipe_url && (
                     <a href={meal.recipe_url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm mb-8" onClick={(e) => e.stopPropagation()}>
                       Open recipe {'\u2192'}
                     </a>
                   )}
 
-                  {/* Ingredients with availability check */}
-                  {meal.ingredients && meal.ingredients.length > 0 && (
+                  {ingredients.length > 0 && (
                     <div className="mb-12">
                       <div className="form-label">Ingredients</div>
-                      <div className="ingredient-list">
-                        {meal.ingredients.map((ing, i) => {
-                          const inPantry = availability.available.includes(ing);
+                      <div className="ingredient-list-view">
+                        {ingredients.map((ing, i) => {
+                          const inPantry = availability ? availability.available.some((a) => a.name === ing.name) : false;
                           return (
-                            <span key={i} className={`ingredient-tag ${inPantry ? 'in-pantry' : 'missing'}`}>
-                              {inPantry ? '\u2705' : '\u274C'} {ing}
-                            </span>
+                            <div key={i} className={`ingredient-line ${inPantry ? 'in-pantry' : 'missing'}`}>
+                              <span className="ingredient-status">{inPantry ? '\u2705' : '\u274C'}</span>
+                              <span className="ingredient-line-name">{ing.name}</span>
+                              {(ing.qty || ing.unit) && (
+                                <span className="ingredient-line-qty">{ing.qty}{ing.unit ? ` ${ing.unit}` : ''}</span>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
 
-                      {/* Availability summary */}
-                      {availability.canMake ? (
-                        <div className="availability-badge available">
-                          {'\u2705'} You have everything to make this!
-                        </div>
-                      ) : (
-                        <div className="availability-badge not-available">
-                          <div>{'\u26A0\uFE0F'} Missing {availability.missing.length} ingredient{availability.missing.length > 1 ? 's' : ''}</div>
-                          <button
-                            className="btn btn-primary btn-sm mt-8"
-                            onClick={(e) => { e.stopPropagation(); addMissingToGrocery(availability.missing); }}
-                          >
-                            Add missing to grocery
-                          </button>
-                        </div>
+                      {availability && (
+                        availability.canMake ? (
+                          <div className="availability-badge available">{'\u2705'} You have everything to make this!</div>
+                        ) : (
+                          <div className="availability-badge not-available">
+                            <div>{'\u26A0\uFE0F'} Missing {availability.missing.length} ingredient{availability.missing.length > 1 ? 's' : ''}</div>
+                            <button className="btn btn-primary btn-sm mt-8" onClick={(e) => { e.stopPropagation(); addMissingToGrocery(availability.missing); }}>
+                              Add missing to grocery
+                            </button>
+                          </div>
+                        )
                       )}
                     </div>
                   )}
 
-                  {meal.last_cooked && (
-                    <div className="text-sm text-muted mb-8">Last cooked: {formatDate(meal.last_cooked)}</div>
-                  )}
+                  {meal.last_cooked && <div className="text-sm text-muted mb-8">Last cooked: {formatDate(meal.last_cooked)}</div>}
 
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); openCookPicker(meal); }}>
-                      Cook this week
-                    </button>
-                    <button className="btn btn-danger btn-sm" onClick={(e) => { e.stopPropagation(); handleDelete(meal.id); }}>
-                      Delete
-                    </button>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); openCookPicker(meal); }}>Cook this week</button>
+                    <button className="btn btn-danger btn-sm" onClick={(e) => { e.stopPropagation(); handleDelete(meal.id); }}>Delete</button>
                   </div>
                 </div>
               )}
@@ -238,26 +239,18 @@ export default function Meals({ showToast }) {
         })
       )}
 
-      {/* Cook-this-week day/slot picker */}
       <Sheet open={cookPickerOpen} onClose={() => { setCookPickerOpen(false); setCookPickerMeal(null); }} title={cookPickerMeal ? `Schedule "${cookPickerMeal.name}"` : 'Pick a slot'}>
         <p className="text-sm text-muted mb-12">Choose which day and meal slot:</p>
         {DAYS.map((day) => (
           <div key={day} style={{ marginBottom: 8 }}>
             <div className="fw-600 text-sm mb-8">{day}</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              {slotTypes.map((slot) => {
-                const key = `${day}-${slot}`;
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              {mealSlots.map((slot) => {
+                const key = slotKey(day, slot);
                 const taken = plan[key];
                 return (
-                  <button
-                    key={slot}
-                    className={`btn btn-sm ${taken ? 'btn-ghost' : 'btn-secondary'}`}
-                    onClick={() => !taken && selectCookSlot(day, slot)}
-                    disabled={!!taken}
-                    style={{ flex: 1, opacity: taken ? 0.4 : 1 }}
-                  >
-                    {slotLabels[slot]}
-                    {taken && ' (taken)'}
+                  <button key={slot} className={`btn btn-sm ${taken ? 'btn-ghost' : 'btn-secondary'}`} onClick={() => !taken && selectCookSlot(day, slot)} disabled={!!taken} style={{ flex: 1, minWidth: 80, opacity: taken ? 0.4 : 1 }}>
+                    {slot}{taken && ' \u2713'}
                   </button>
                 );
               })}

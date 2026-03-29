@@ -2,13 +2,14 @@ import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
 import Sheet from '../components/Sheet';
-import { DAYS, DEFAULT_MEAL_CATEGORIES, getDayName } from '../utils/helpers';
+import { DAYS, DEFAULT_MEAL_CATEGORIES, getDayName, getMealSlots, slotKey, parseIngredients } from '../utils/helpers';
 
 export default function Planner({ showToast, setActivePage }) {
   const { profile } = useAuth();
   const { meals, plan, setPlanSlot, clearPlanSlot, planNotes, setPlanNote, grocery, pantry, addGroceryBatch } = useData();
 
   const mealCategories = ['All', ...(profile?.meal_categories || DEFAULT_MEAL_CATEGORIES)];
+  const mealSlots = getMealSlots(profile);
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSlot, setPickerSlot] = useState(null);
@@ -18,11 +19,6 @@ export default function Planner({ showToast, setActivePage }) {
   const [editingNote, setEditingNote] = useState(null);
 
   const todayDay = getDayName();
-  const ramadan = profile?.ramadan_mode || false;
-  const slotTypes = ramadan ? ['sehri', 'iftar'] : ['breakfast', 'dinner'];
-  const slotLabels = ramadan
-    ? { sehri: 'Sehri', iftar: 'Iftar' }
-    : { breakfast: 'Breakfast', dinner: 'Dinner' };
 
   const filteredMeals = useMemo(() => {
     let list = meals;
@@ -36,22 +32,19 @@ export default function Planner({ showToast, setActivePage }) {
 
   function openPicker(day, slot) {
     setPickerSlot({ day, slot });
-    setSearch('');
-    setFilterCat('All');
-    setIsLeftover(false);
+    setSearch(''); setFilterCat('All'); setIsLeftover(false);
     setPickerOpen(true);
   }
 
   async function selectMeal(meal) {
-    const key = `${pickerSlot.day}-${pickerSlot.slot}`;
+    const key = slotKey(pickerSlot.day, pickerSlot.slot);
     await setPlanSlot(key, meal.id, isLeftover);
     setPickerOpen(false);
     showToast(`${meal.name} planned for ${pickerSlot.day}`);
   }
 
   async function handleClearSlot(day, slot) {
-    const key = `${day}-${slot}`;
-    await clearPlanSlot(key);
+    await clearPlanSlot(slotKey(day, slot));
   }
 
   async function handleNoteChange(day, value) {
@@ -67,21 +60,18 @@ export default function Planner({ showToast, setActivePage }) {
       const entry = plan[key];
       if (!entry || !entry.mealId) continue;
       const meal = meals.find((m) => m.id === entry.mealId);
-      if (!meal || !meal.ingredients) continue;
-      for (const ing of meal.ingredients) {
-        const lower = ing.toLowerCase();
+      if (!meal) continue;
+      const ingredients = parseIngredients(meal);
+      for (const ing of ingredients) {
+        const lower = ing.name.toLowerCase();
         if (!pantryNames.has(lower) && !existingNames.has(lower)) {
           existingNames.add(lower);
-          newItems.push({ name: ing, category: 'Other' });
+          newItems.push({ name: `${ing.name}${ing.qty ? ` (${ing.qty}${ing.unit})` : ''}`, category: 'Other' });
         }
       }
     }
 
-    if (newItems.length === 0) {
-      showToast('No new items to add');
-      return;
-    }
-
+    if (newItems.length === 0) { showToast('No new items to add'); return; }
     await addGroceryBatch(newItems);
     showToast(`${newItems.length} item${newItems.length > 1 ? 's' : ''} added to your list`);
     setTimeout(() => setActivePage('grocery'), 1500);
@@ -99,20 +89,12 @@ export default function Planner({ showToast, setActivePage }) {
               {day}
               {day === todayDay && <span className="badge badge-accent" style={{ marginLeft: 8 }}>Today</span>}
             </span>
-            <span className="day-note-icon clickable" onClick={() => setEditingNote(editingNote === day ? null : day)}>
-              {'\u270F\uFE0F'}
-            </span>
+            <span className="day-note-icon clickable" onClick={() => setEditingNote(editingNote === day ? null : day)}>{'\u270F\uFE0F'}</span>
           </div>
 
           {editingNote === day && (
             <div className="day-note">
-              <input
-                placeholder="Add a note..."
-                value={planNotes[day]?.text || ''}
-                onChange={(e) => handleNoteChange(day, e.target.value)}
-                onBlur={() => setEditingNote(null)}
-                autoFocus
-              />
+              <input placeholder="Add a note..." value={planNotes[day]?.text || ''} onChange={(e) => handleNoteChange(day, e.target.value)} onBlur={() => setEditingNote(null)} autoFocus />
             </div>
           )}
 
@@ -120,20 +102,15 @@ export default function Planner({ showToast, setActivePage }) {
             <div className="text-xs text-muted mb-8" style={{ fontStyle: 'italic' }}>{planNotes[day].text}</div>
           )}
 
-          {slotTypes.map((slot) => {
-            const key = `${day}-${slot}`;
+          {mealSlots.map((slot) => {
+            const key = slotKey(day, slot);
             const entry = plan[key];
             const meal = entry ? meals.find((m) => m.id === entry.mealId) : null;
 
             return (
-              <div
-                key={slot}
-                className="day-slot"
-                onClick={() => openPicker(day, slot)}
-                onContextMenu={(e) => { e.preventDefault(); if (entry) handleClearSlot(day, slot); }}
-              >
+              <div key={slot} className="day-slot" onClick={() => openPicker(day, slot)} onContextMenu={(e) => { e.preventDefault(); if (entry) handleClearSlot(day, slot); }}>
                 <div>
-                  <div className="day-slot-label">{slotLabels[slot]}</div>
+                  <div className="day-slot-label">{slot}</div>
                   {meal ? (
                     <div className="day-slot-meal">
                       {meal.name}
@@ -144,9 +121,7 @@ export default function Planner({ showToast, setActivePage }) {
                   )}
                 </div>
                 {entry && (
-                  <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); handleClearSlot(day, slot); }}>
-                    {'\u2715'}
-                  </span>
+                  <span className="text-xs text-muted clickable" onClick={(e) => { e.stopPropagation(); handleClearSlot(day, slot); }}>{'\u2715'}</span>
                 )}
               </div>
             );
@@ -155,9 +130,7 @@ export default function Planner({ showToast, setActivePage }) {
       ))}
 
       <div className="sticky-bottom">
-        <button className="btn btn-primary btn-block" onClick={generateGroceryList}>
-          {'\uD83D\uDED2'} Generate Grocery List
-        </button>
+        <button className="btn btn-primary btn-block" onClick={generateGroceryList}>{'\uD83D\uDED2'} Generate Grocery List</button>
       </div>
 
       <Sheet open={pickerOpen} onClose={() => setPickerOpen(false)} title="Choose a meal">
@@ -165,24 +138,19 @@ export default function Planner({ showToast, setActivePage }) {
           <span className="search-icon">{'\uD83D\uDD0D'}</span>
           <input placeholder="Search meals..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-
         <div className="pill-row mb-12">
           {mealCategories.map((cat) => (
             <span key={cat} className={`pill ${filterCat === cat ? 'active' : ''}`} onClick={() => setFilterCat(cat)}>{cat}</span>
           ))}
         </div>
-
         <div className="toggle-row" style={{ paddingTop: 0 }}>
           <span className="text-sm">Mark as leftovers</span>
           <div className={`toggle-switch ${isLeftover ? 'on' : ''}`} onClick={() => setIsLeftover(!isLeftover)} />
         </div>
-
         {filteredMeals.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-text">No meals found. Add some in the Meals section!</div>
-          </div>
+          <div className="empty-state"><div className="empty-state-text">No meals found. Add some in the Meals section!</div></div>
         ) : (
-          <div style={{ maxHeight: '40dvh', overflowY: 'auto' }}>
+          <div style={{ maxHeight: '40dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
             {filteredMeals.map((meal) => (
               <div key={meal.id} className="checkbox-row" onClick={() => selectMeal(meal)}>
                 <span className="meal-card-name">{meal.name}</span>
@@ -191,7 +159,6 @@ export default function Planner({ showToast, setActivePage }) {
             ))}
           </div>
         )}
-
         <button className="btn btn-ghost btn-block mt-12" onClick={() => setPickerOpen(false)}>Cancel</button>
       </Sheet>
     </div>

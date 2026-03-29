@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useData } from '../contexts/DataContext';
-import { todayISO, DEFAULT_MEAL_CATEGORIES, DEFAULT_GROCERY_CHANNELS } from '../utils/helpers';
+import { todayISO, DEFAULT_MEAL_CATEGORIES, DEFAULT_GROCERY_CHANNELS, DEFAULT_MEAL_SLOTS } from '../utils/helpers';
 import { requestNotificationPermission } from '../utils/notifications';
 
 export default function Settings({ showToast }) {
@@ -10,11 +10,14 @@ export default function Settings({ showToast }) {
 
   const [newCategory, setNewCategory] = useState('');
   const [newChannel, setNewChannel] = useState('');
+  const [newSlot, setNewSlot] = useState('');
   const [showCategories, setShowCategories] = useState(false);
   const [showChannels, setShowChannels] = useState(false);
+  const [showSlots, setShowSlots] = useState(false);
 
   const mealCategories = profile?.meal_categories || DEFAULT_MEAL_CATEGORIES;
   const groceryChannels = profile?.grocery_channels || DEFAULT_GROCERY_CHANNELS;
+  const mealSlots = profile?.meal_slots || DEFAULT_MEAL_SLOTS;
 
   function handleExportData() {
     const data = exportAllData();
@@ -158,6 +161,34 @@ export default function Settings({ showToast }) {
                   style={{ flex: 1 }}
                 />
                 <button className="btn btn-primary btn-sm" onClick={addCategory} disabled={!newCategory.trim()}>Add</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Meal Slots */}
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 8 }}>
+          <div className="flex-between clickable" onClick={() => setShowSlots(!showSlots)} style={{ minHeight: 48 }}>
+            <div className="fw-600">Meal Slots</div>
+            <span className="text-muted">{showSlots ? '\u25B2' : '\u25BC'}</span>
+          </div>
+          <div className="text-xs text-muted" style={{ marginTop: -4 }}>Customize which meal slots appear in your planner (e.g. Lunch, Tea Time)</div>
+
+          {showSlots && (
+            <div className="mt-8">
+              <div className="pill-row mb-12" style={{ flexWrap: 'wrap' }}>
+                {mealSlots.map((slot) => (
+                  <span key={slot} className="pill" style={{ gap: 6 }}>
+                    {slot}
+                    {mealSlots.length > 1 && (
+                      <span className="clickable" onClick={(e) => { e.stopPropagation(); updateProfile({ meal_slots: mealSlots.filter((s) => s !== slot) }); showToast(`"${slot}" removed`); }} style={{ opacity: 0.6, fontSize: '0.7rem' }}>{'\u2715'}</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input className="form-input" placeholder="e.g. Lunch, Tea Time" value={newSlot} onChange={(e) => setNewSlot(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && newSlot.trim() && !mealSlots.includes(newSlot.trim())) { updateProfile({ meal_slots: [...mealSlots, newSlot.trim()] }); showToast(`"${newSlot.trim()}" added`); setNewSlot(''); } }} style={{ flex: 1 }} />
+                <button className="btn btn-primary btn-sm" onClick={() => { if (newSlot.trim() && !mealSlots.includes(newSlot.trim())) { updateProfile({ meal_slots: [...mealSlots, newSlot.trim()] }); showToast(`"${newSlot.trim()}" added`); setNewSlot(''); } }} disabled={!newSlot.trim()}>Add</button>
               </div>
             </div>
           )}

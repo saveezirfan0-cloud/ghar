@@ -15,7 +15,7 @@ import Chores from './pages/Chores';
 import Settings from './pages/Settings';
 import More from './pages/More';
 
-function AppContent() {
+function AppContent({ guestMode, exitGuest }) {
   const { user, profile, loading: authLoading } = useAuth();
   const data = useData();
 
@@ -23,14 +23,13 @@ function AppContent() {
   const [toast, setToast] = useState(null);
   const [toastKey, setToastKey] = useState(0);
 
-  // Apply dark mode from profile
   useEffect(() => {
-    if (profile?.dark_mode) {
+    if (!guestMode && profile?.dark_mode) {
       document.documentElement.setAttribute('data-theme', 'dark');
-    } else {
+    } else if (!guestMode) {
       document.documentElement.setAttribute('data-theme', 'light');
     }
-  }, [profile?.dark_mode]);
+  }, [profile?.dark_mode, guestMode]);
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -38,7 +37,8 @@ function AppContent() {
     setTimeout(() => setToast(null), 2500);
   }, []);
 
-  if (authLoading || (user && data.dataLoading)) {
+  // Loading (only for signed-in users)
+  if (!guestMode && (authLoading || (user && data.dataLoading))) {
     return (
       <div className="app-shell">
         <div className="loading-page">
@@ -49,15 +49,13 @@ function AppContent() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="app-shell">
-        <Auth />
-      </div>
-    );
+  // Auth screen (only for non-guest, non-signed-in)
+  if (!guestMode && !user) {
+    return null; // Handled by parent
   }
 
-  if (profile && !profile.tutorial_completed) {
+  // Tutorial (signed-in users only)
+  if (!guestMode && profile && !profile.tutorial_completed) {
     return (
       <div className="app-shell">
         <Tutorial />
@@ -69,33 +67,34 @@ function AppContent() {
 
   function renderPage() {
     switch (activePage) {
-      case 'meals':
-        return <Meals showToast={showToast} />;
-      case 'planner':
-        return <Planner showToast={showToast} setActivePage={setActivePage} />;
-      case 'grocery':
-        return <Grocery showToast={showToast} />;
-      case 'pantry':
-        return <Pantry showToast={showToast} />;
-      case 'chores':
-        return <Chores showToast={showToast} />;
+      case 'meals': return <Meals showToast={showToast} />;
+      case 'planner': return <Planner showToast={showToast} setActivePage={setActivePage} />;
+      case 'grocery': return <Grocery showToast={showToast} />;
+      case 'pantry': return <Pantry showToast={showToast} />;
+      case 'chores': return <Chores showToast={showToast} />;
       case 'settings':
-        return <Settings showToast={showToast} />;
-      case 'more':
-        return <More setActivePage={setActivePage} />;
-      default:
-        return (
-          <Dashboard
-            setActivePage={setActivePage}
-            showToast={showToast}
-            onSettingsOpen={() => setActivePage('settings')}
-          />
-        );
+        return guestMode ? (
+          <div className="page">
+            <div className="page-title">Guest Mode</div>
+            <div className="page-subtitle">You're exploring without an account</div>
+            <div className="card">
+              <p className="text-sm mb-12">Create an account to save your data, sync across devices, and unlock all settings.</p>
+              <button className="btn btn-primary btn-block" onClick={exitGuest}>Create Account or Sign In</button>
+            </div>
+          </div>
+        ) : <Settings showToast={showToast} />;
+      case 'more': return <More setActivePage={setActivePage} />;
+      default: return <Dashboard setActivePage={setActivePage} showToast={showToast} onSettingsOpen={() => setActivePage('settings')} />;
     }
   }
 
   return (
     <div className="app-shell">
+      {guestMode && (
+        <div className="guest-banner" onClick={exitGuest}>
+          Exploring as guest &middot; <strong>Sign up to save your data</strong>
+        </div>
+      )}
       {renderPage()}
       <QuickAdd showToast={showToast} />
       <BottomNav activePage={activePage} setActivePage={setActivePage} groceryCount={uncheckedGrocery} />
@@ -105,11 +104,39 @@ function AppContent() {
 }
 
 export default function App() {
+  const [guestMode, setGuestMode] = useState(false);
+
+  function handleGuestMode() {
+    setGuestMode(true);
+  }
+
+  function exitGuest() {
+    setGuestMode(false);
+  }
+
   return (
     <AuthProvider>
-      <DataProvider>
-        <AppContent />
+      <DataProvider guestMode={guestMode}>
+        {guestMode ? (
+          <AppContent guestMode={true} exitGuest={exitGuest} />
+        ) : (
+          <AuthGate onGuestMode={handleGuestMode} exitGuest={exitGuest} />
+        )}
       </DataProvider>
     </AuthProvider>
   );
+}
+
+function AuthGate({ onGuestMode, exitGuest }) {
+  const { user } = useAuth();
+
+  if (!user) {
+    return (
+      <div className="app-shell">
+        <Auth onGuestMode={onGuestMode} />
+      </div>
+    );
+  }
+
+  return <AppContent guestMode={false} exitGuest={exitGuest} />;
 }

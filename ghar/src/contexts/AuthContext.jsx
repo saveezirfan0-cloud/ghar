@@ -65,6 +65,11 @@ export function AuthProvider({ children }) {
     return data;
   }
 
+  async function resetPassword(email) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    if (error) throw error;
+  }
+
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
@@ -94,6 +99,7 @@ export function AuthProvider({ children }) {
     signUp,
     signIn,
     signOut,
+    resetPassword,
     updateProfile,
     refreshProfile: () => user && fetchProfile(user.id)
   };
