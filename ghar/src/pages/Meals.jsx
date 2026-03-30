@@ -26,6 +26,11 @@ export default function Meals({ showToast }) {
   const [suggestionOpen, setSuggestionOpen] = useState(false);
   const [suggestedMeal, setSuggestedMeal] = useState(null);
 
+  // Video link import
+  const [videoUrl, setVideoUrl] = useState('');
+  const [videoParsing, setVideoParsing] = useState(false);
+  const [videoError, setVideoError] = useState('');
+
   // Form
   const [formName, setFormName] = useState('');
   const [formCategory, setFormCategory] = useState('Other');
@@ -94,6 +99,62 @@ export default function Meals({ showToast }) {
     setFormName(''); setFormCategory('Other'); setFormUrl(''); setFormCalories('');
     setFormIngredients([{ name: '', qty: '', unit: '' }]);
     setShowForm(false);
+  }
+
+  function isVideoUrl(url) {
+    return /youtube\.com|youtu\.be|instagram\.com|facebook\.com|fb\.watch/.test(url);
+  }
+
+  async function handleVideoImport() {
+    const url = videoUrl.trim();
+    if (!url) return;
+    if (!isVideoUrl(url)) {
+      setVideoError('Please paste a YouTube, Instagram, or Facebook link');
+      return;
+    }
+
+    setVideoParsing(true);
+    setVideoError('');
+
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const res = await fetch(`${supabaseUrl}/functions/v1/parse-recipe-video`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseKey}`,
+        },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        setVideoError(data.error || 'Failed to parse recipe from this video');
+        setVideoParsing(false);
+        return;
+      }
+
+      // Pre-fill the form with parsed data
+      setFormName(data.name || '');
+      setFormCategory(data.category || 'Other');
+      setFormUrl(data.source_url || url);
+      setFormCalories(data.calories_per_serving ? String(data.calories_per_serving) : '');
+      setFormIngredients(
+        data.ingredients && data.ingredients.length > 0
+          ? data.ingredients
+          : [{ name: '', qty: '', unit: '' }]
+      );
+
+      setVideoUrl('');
+      setShowForm(true);
+      showToast(`Parsed "${data.name}" - review and save`);
+    } catch {
+      setVideoError('Network error. Please check your connection and try again.');
+    } finally {
+      setVideoParsing(false);
+    }
   }
 
   async function handleDelete(id) {
@@ -182,6 +243,36 @@ export default function Meals({ showToast }) {
         <div className="nudge-banner">
           <span>{nudge}</span>
           <button onClick={() => setNudgeDismissed(true)}>{'\u2715'}</button>
+        </div>
+      )}
+
+      {/* Video Link Import */}
+      {!showForm && (
+        <div className="video-import-section">
+          <div className="video-import-input-row">
+            <input
+              className="form-input"
+              placeholder="Paste a YouTube, Instagram, or Facebook recipe link..."
+              value={videoUrl}
+              onChange={(e) => { setVideoUrl(e.target.value); setVideoError(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && handleVideoImport()}
+              disabled={videoParsing}
+            />
+            <button
+              className="btn btn-primary"
+              onClick={handleVideoImport}
+              disabled={videoParsing || !videoUrl.trim()}
+            >
+              {videoParsing ? 'Parsing...' : 'Import'}
+            </button>
+          </div>
+          {videoParsing && (
+            <div className="video-import-loading">
+              <div className="video-import-spinner" />
+              <span>Watching the video and extracting recipe...</span>
+            </div>
+          )}
+          {videoError && <div className="video-import-error">{videoError}</div>}
         </div>
       )}
 
