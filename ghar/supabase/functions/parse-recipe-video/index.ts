@@ -618,6 +618,24 @@ Deno.serve(async (req) => {
     }
 
     const context = contextParts.join("\n\n---\n\n");
+    console.log(
+      `Context for Claude (${context.length}chars): ${context.slice(0, 300)}...`
+    );
+
+    // If we only have a title and nothing else, give a specific error
+    if (!videoDescription && !transcript && !linkedRecipeContent && !pageDescription) {
+      console.error("Only have title, no description/transcript/recipe content");
+      return new Response(
+        JSON.stringify({
+          error:
+            "Could only get the video title but not the description or transcript. Please set up YOUTUBE_API_KEY in Supabase secrets to enable full video data extraction.",
+        }),
+        {
+          status: 422,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
 
     // Call Claude API to parse the recipe
     const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY");
@@ -646,7 +664,9 @@ Deno.serve(async (req) => {
             role: "user",
             content: `You are a recipe parser. Extract the recipe from this cooking video's information.
 
-Return ONLY valid JSON in this exact format (no markdown, no explanation):
+IMPORTANT: You MUST return valid JSON. Even if the information is limited, do your best to extract or infer the recipe.
+
+Return ONLY valid JSON in this exact format (no markdown, no code fences, no explanation):
 {
   "name": "Recipe Name",
   "category": "one of: Daal, Salan, Pulao, Pasta, Breakfast, Snack, Other",
@@ -689,14 +709,15 @@ ${context}`,
 
     const aiData = await aiResponse.json();
     const aiText = aiData.content?.[0]?.text || "";
+    console.log(`Claude raw response (${aiText.length}chars): ${aiText.slice(0, 500)}`);
 
     let recipe;
     try {
       const jsonMatch = aiText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON found");
+      if (!jsonMatch) throw new Error("No JSON found in response");
       recipe = JSON.parse(jsonMatch[0]);
-    } catch {
-      console.error("Claude response parse failed. Raw:", aiText.slice(0, 500));
+    } catch (e) {
+      console.error("JSON parse failed:", e, "Raw:", aiText.slice(0, 500));
       return new Response(
         JSON.stringify({
           error:
