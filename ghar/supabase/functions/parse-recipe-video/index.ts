@@ -267,6 +267,140 @@ function decodeHtmlEntities(s: string): string {
     .replace(/&#x2F;/g, "/");
 }
 
+// Extract recipe-related URLs from video description
+function extractRecipeUrls(description: string): string[] {
+  if (!description) return [];
+
+  // Find all URLs in the description
+  const urlRegex = /https?:\/\/[^\s<>"')\]]+/g;
+  const urls = description.match(urlRegex) || [];
+
+  // Filter for likely recipe URLs (exclude social media, merchandise, etc.)
+  const recipeIndicators = [
+    /recipe/i,
+    /cook/i,
+    /food/i,
+    /kitchen/i,
+    /blog/i,
+    /ingredients/i,
+  ];
+  const excludePatterns = [
+    /youtube\.com/i,
+    /youtu\.be/i,
+    /instagram\.com/i,
+    /facebook\.com/i,
+    /twitter\.com/i,
+    /x\.com/i,
+    /tiktok\.com/i,
+    /amazon\./i,
+    /amzn\./i,
+    /bit\.ly/i,
+    /linktr\.ee/i,
+    /patreon\.com/i,
+    /ko-fi\.com/i,
+  ];
+
+  return urls.filter((u) => {
+    if (excludePatterns.some((p) => p.test(u))) return false;
+    // Include if URL or description context suggests recipe content
+    return recipeIndicators.some((p) => p.test(u));
+  }).slice(0, 2); // Max 2 recipe URLs to avoid slow requests
+}
+
+// Fetch recipe page content (text extraction)
+async function fetchRecipePage(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": youtubeHeaders["User-Agent"],
+        Accept: "text/html",
+      },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // Try to find JSON-LD recipe schema (most reliable)
+    const jsonLdMatches = html.matchAll(
+      /<script\s+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi
+    );
+    for (const m of jsonLdMatches) {
+      try {
+        const data = JSON.parse(m[1]);
+        const recipes = Array.isArray(data) ? data : [data];
+        for (const item of recipes) {
+          if (
+            item["@type"] === "Recipe" ||
+            (Array.isArray(item["@type"]) && item["@type"].includes("Recipe"))
+          ) {
+            const parts: string[] = [];
+            if (item.name) parts.push(`Recipe: ${item.name}`);
+            if (item.description) parts.push(item.description);
+            if (Array.isArray(item.recipeIngredient)) {
+              parts.push(
+                "Ingredients:\n" + item.recipeIngredient.join("\n")
+              );
+            }
+            if (Array.isArray(item.recipeInstructions)) {
+              const steps = item.recipeInstructions.map(
+                (s: { text?: string } | string) =>
+                  typeof s === "string" ? s : s.text || ""
+              );
+              parts.push("Instructions:\n" + steps.join("\n"));
+            }
+            if (item.nutrition?.calories) {
+              parts.push(`Calories: ${item.nutrition.calories}`);
+            }
+            if (parts.length > 0) return parts.join("\n\n");
+          }
+          // Handle @graph
+          if (Array.isArray(item["@graph"])) {
+            for (const g of item["@graph"]) {
+              if (
+                g["@type"] === "Recipe" ||
+                (Array.isArray(g["@type"]) && g["@type"].includes("Recipe"))
+              ) {
+                const parts: string[] = [];
+                if (g.name) parts.push(`Recipe: ${g.name}`);
+                if (g.description) parts.push(g.description);
+                if (Array.isArray(g.recipeIngredient)) {
+                  parts.push(
+                    "Ingredients:\n" + g.recipeIngredient.join("\n")
+                  );
+                }
+                if (Array.isArray(g.recipeInstructions)) {
+                  const steps = g.recipeInstructions.map(
+                    (s: { text?: string } | string) =>
+                      typeof s === "string" ? s : s.text || ""
+                  );
+                  parts.push("Instructions:\n" + steps.join("\n"));
+                }
+                if (g.nutrition?.calories) {
+                  parts.push(`Calories: ${g.nutrition.calories}`);
+                }
+                if (parts.length > 0) return parts.join("\n\n");
+              }
+            }
+          }
+        }
+      } catch {
+        // Not valid JSON-LD, skip
+      }
+    }
+
+    // Fallback: extract og metadata from recipe page
+    const meta = extractPageMetadata(html);
+    if (meta.title || meta.description) {
+      return `Linked Recipe Page - ${meta.title}\n${meta.description}`;
+    }
+
+    return null;
+  } catch (e) {
+    console.error(`Failed to fetch recipe page ${url}:`, e);
+    return null;
+  }
+}
+
 // Fetch transcript from a caption track URL
 async function fetchTranscriptFromUrl(
   captionUrl: string
@@ -437,11 +571,32 @@ Deno.serve(async (req) => {
       }
     }
 
+    // If we have a video description, check for recipe links and fetch them
+    let linkedRecipeContent = "";
+    if (videoDescription) {
+      const recipeUrls = extractRecipeUrls(videoDescription);
+      if (recipeUrls.length > 0) {
+        console.log(`Found recipe URLs in description: ${recipeUrls.join(", ")}`);
+        const recipePages = await Promise.all(
+          recipeUrls.map((u) => fetchRecipePage(u))
+        );
+        const validPages = recipePages.filter(Boolean);
+        if (validPages.length > 0) {
+          linkedRecipeContent = validPages.join("\n\n---\n\n");
+          console.log(
+            `Fetched ${validPages.length} recipe page(s): ${linkedRecipeContent.length}chars`
+          );
+        }
+      }
+    }
+
     // Build context for Claude
     const contextParts: string[] = [];
     if (pageTitle) contextParts.push(`Video Title: ${pageTitle}`);
     if (videoDescription)
       contextParts.push(`Video Description:\n${videoDescription}`);
+    if (linkedRecipeContent)
+      contextParts.push(`Linked Recipe Page Content:\n${linkedRecipeContent}`);
     if (pageDescription && pageDescription !== videoDescription)
       contextParts.push(`Page Description: ${pageDescription}`);
     if (transcript) contextParts.push(`Video Transcript:\n${transcript}`);
