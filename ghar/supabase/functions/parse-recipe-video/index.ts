@@ -29,63 +29,128 @@ function detectPlatform(
   return "unknown";
 }
 
-// Fetch YouTube transcript using the innertube API
-async function fetchYouTubeTranscript(
+// Fetch YouTube video metadata via oEmbed API (reliable, no scraping)
+async function fetchYouTubeOEmbed(
   videoId: string
-): Promise<string | null> {
+): Promise<{ title: string; author: string } | null> {
   try {
-    // First get the video page to extract needed params
-    const pageRes = await fetch(
-      `https://www.youtube.com/watch?v=${videoId}`,
-      {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-      }
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
     );
-    const pageHtml = await pageRes.text();
-
-    // Try to extract captions from the page data
-    const captionsMatch = pageHtml.match(
-      /"captions":\s*(\{.*?"playerCaptionsTracklistRenderer".*?\})\s*,\s*"/s
-    );
-
-    if (captionsMatch) {
-      // Find caption track URL
-      const urlMatch = captionsMatch[1].match(
-        /"baseUrl"\s*:\s*"(https:[^"]+)"/
-      );
-      if (urlMatch) {
-        const captionUrl = urlMatch[1].replace(/\\u0026/g, "&");
-        const captionRes = await fetch(captionUrl);
-        const captionXml = await captionRes.text();
-
-        // Extract text from XML caption track
-        const textParts: string[] = [];
-        const regex = /<text[^>]*>(.*?)<\/text>/gs;
-        let match;
-        while ((match = regex.exec(captionXml)) !== null) {
-          textParts.push(
-            match[1]
-              .replace(/&amp;/g, "&")
-              .replace(/&lt;/g, "<")
-              .replace(/&gt;/g, ">")
-              .replace(/&#39;/g, "'")
-              .replace(/&quot;/g, '"')
-          );
-        }
-        if (textParts.length > 0) {
-          return textParts.join(" ");
-        }
-      }
-    }
-
-    return null;
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      title: data.title || "",
+      author: data.author_name || "",
+    };
   } catch {
     return null;
   }
+}
+
+// Fetch YouTube video details via Innertube API (description, caption tracks)
+async function fetchYouTubeInnertube(videoId: string): Promise<{
+  description: string;
+  captionTracks: { baseUrl: string; languageCode: string }[];
+}> {
+  const result = { description: "", captionTracks: [] as { baseUrl: string; languageCode: string }[] };
+
+  try {
+    const res = await fetch(
+      "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        },
+        body: JSON.stringify({
+          videoId,
+          context: {
+            client: {
+              clientName: "WEB",
+              clientVersion: "2.20241126.01.00",
+              hl: "en",
+              gl: "US",
+            },
+          },
+        }),
+      }
+    );
+
+    if (!res.ok) return result;
+
+    const data = await res.json();
+
+    // Extract description
+    result.description =
+      data?.videoDetails?.shortDescription ||
+      data?.microformat?.playerMicroformatRenderer?.description?.simpleText ||
+      "";
+
+    // Extract caption tracks
+    const tracks =
+      data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (Array.isArray(tracks)) {
+      result.captionTracks = tracks
+        .filter(
+          (t: { baseUrl?: string; languageCode?: string }) =>
+            t.baseUrl && t.languageCode
+        )
+        .map((t: { baseUrl: string; languageCode: string }) => ({
+          baseUrl: t.baseUrl,
+          languageCode: t.languageCode,
+        }));
+    }
+
+    return result;
+  } catch {
+    return result;
+  }
+}
+
+// Fetch transcript from a caption track URL
+async function fetchTranscriptFromTrack(
+  captionUrl: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(captionUrl);
+    if (!res.ok) return null;
+    const xml = await res.text();
+
+    const textParts: string[] = [];
+    const regex = /<text[^>]*>(.*?)<\/text>/gs;
+    let match;
+    while ((match = regex.exec(xml)) !== null) {
+      textParts.push(
+        match[1]
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&#39;/g, "'")
+          .replace(/&quot;/g, '"')
+      );
+    }
+    return textParts.length > 0 ? textParts.join(" ") : null;
+  } catch {
+    return null;
+  }
+}
+
+// Fetch YouTube transcript using caption tracks from Innertube
+async function fetchYouTubeTranscript(
+  captionTracks: { baseUrl: string; languageCode: string }[]
+): Promise<string | null> {
+  if (captionTracks.length === 0) return null;
+
+  // Prefer English captions, fall back to first available
+  const englishTrack = captionTracks.find((t) =>
+    t.languageCode.startsWith("en")
+  );
+  const track = englishTrack || captionTracks[0];
+
+  return fetchTranscriptFromTrack(track.baseUrl);
 }
 
 // Extract metadata from page HTML (Open Graph tags, title, description)
@@ -136,44 +201,6 @@ function extractPageMetadata(html: string): {
   return { title: decode(title), description: decode(description) };
 }
 
-// Extract YouTube description from page HTML
-function extractYouTubeDescription(html: string): string {
-  // Try to get full description from ytInitialPlayerResponse
-  const playerMatch = html.match(
-    /var\s+ytInitialPlayerResponse\s*=\s*(\{.*?\});\s*(?:var|<\/script)/s
-  );
-  if (playerMatch) {
-    try {
-      const data = JSON.parse(playerMatch[1]);
-      const desc =
-        data?.videoDetails?.shortDescription ||
-        data?.microformat?.playerMicroformatRenderer?.description
-          ?.simpleText ||
-        "";
-      if (desc) return desc;
-    } catch {
-      // ignore parse errors
-    }
-  }
-
-  // Fallback: try ytInitialData
-  const dataMatch = html.match(
-    /var\s+ytInitialData\s*=\s*(\{.*?\});\s*(?:var|<\/script)/s
-  );
-  if (dataMatch) {
-    try {
-      const descMatch = dataMatch[1].match(
-        /"description":\s*\{"simpleText":\s*"((?:[^"\\]|\\.)*)"/
-      );
-      if (descMatch) return JSON.parse(`"${descMatch[1]}"`);
-    } catch {
-      // ignore
-    }
-  }
-
-  return "";
-}
-
 Deno.serve(async (req) => {
   // Handle CORS
   if (req.method === "OPTIONS") {
@@ -209,24 +236,25 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Fetch page and transcript in parallel
-      const [pageRes, transcriptResult] = await Promise.all([
-        fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-          },
-        }),
-        fetchYouTubeTranscript(videoId),
+      // Fetch oEmbed metadata and Innertube data in parallel
+      const [oembedResult, innertubeResult] = await Promise.all([
+        fetchYouTubeOEmbed(videoId),
+        fetchYouTubeInnertube(videoId),
       ]);
 
-      const pageHtml = await pageRes.text();
-      const meta = extractPageMetadata(pageHtml);
-      pageTitle = meta.title;
-      pageDescription = meta.description;
-      videoDescription = extractYouTubeDescription(pageHtml);
-      transcript = transcriptResult || "";
+      // Use oEmbed for title (most reliable)
+      if (oembedResult) {
+        pageTitle = oembedResult.title;
+      }
+
+      // Use Innertube for description and captions
+      videoDescription = innertubeResult.description;
+
+      // Fetch transcript from caption tracks
+      if (innertubeResult.captionTracks.length > 0) {
+        transcript =
+          (await fetchYouTubeTranscript(innertubeResult.captionTracks)) || "";
+      }
     } else {
       // Instagram / Facebook / Unknown - fetch page and extract metadata
       try {
