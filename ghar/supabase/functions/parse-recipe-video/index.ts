@@ -29,6 +29,18 @@ function detectPlatform(
   return "unknown";
 }
 
+// Standard headers for YouTube requests
+const youtubeHeaders = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Accept-Language": "en-US,en;q=0.9",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  // Consent cookies to bypass GDPR consent wall
+  Cookie:
+    "CONSENT=PENDING+987; SOCS=CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjMxMjE5LjA3X3AxGgJlbiACGgYIgJnsBhACGgYIgJnsBhAC",
+};
+
 // Fetch YouTube video metadata via oEmbed API (reliable, no scraping)
 async function fetchYouTubeOEmbed(
   videoId: string
@@ -43,80 +55,228 @@ async function fetchYouTubeOEmbed(
       title: data.title || "",
       author: data.author_name || "",
     };
-  } catch {
+  } catch (e) {
+    console.error("oEmbed failed:", e);
     return null;
   }
 }
 
 // Fetch YouTube video details via Innertube API (description, caption tracks)
 async function fetchYouTubeInnertube(videoId: string): Promise<{
+  title: string;
   description: string;
   captionTracks: { baseUrl: string; languageCode: string }[];
 }> {
-  const result = { description: "", captionTracks: [] as { baseUrl: string; languageCode: string }[] };
+  const result = {
+    title: "",
+    description: "",
+    captionTracks: [] as { baseUrl: string; languageCode: string }[],
+  };
+
+  // Try WEB client first, then MWEB (mobile web) as fallback
+  const clients = [
+    { clientName: "WEB", clientVersion: "2.20241126.01.00" },
+    { clientName: "MWEB", clientVersion: "2.20241126.01.00" },
+  ];
+
+  for (const client of clients) {
+    try {
+      const res = await fetch(
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": youtubeHeaders["User-Agent"],
+            Origin: "https://www.youtube.com",
+            Referer: `https://www.youtube.com/watch?v=${videoId}`,
+            "X-YouTube-Client-Name": client.clientName === "WEB" ? "1" : "2",
+            "X-YouTube-Client-Version": client.clientVersion,
+            Cookie: youtubeHeaders.Cookie,
+          },
+          body: JSON.stringify({
+            videoId,
+            context: {
+              client: {
+                clientName: client.clientName,
+                clientVersion: client.clientVersion,
+                hl: "en",
+                gl: "US",
+              },
+            },
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        console.error(
+          `Innertube ${client.clientName} failed: ${res.status} ${res.statusText}`
+        );
+        continue;
+      }
+
+      const data = await res.json();
+
+      // Check for playability errors
+      const status = data?.playabilityStatus?.status;
+      if (status === "ERROR" || status === "LOGIN_REQUIRED") {
+        console.error(`Innertube ${client.clientName} playability: ${status}`);
+        continue;
+      }
+
+      result.title = data?.videoDetails?.title || "";
+      result.description =
+        data?.videoDetails?.shortDescription ||
+        data?.microformat?.playerMicroformatRenderer?.description?.simpleText ||
+        "";
+
+      const tracks =
+        data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      if (Array.isArray(tracks)) {
+        result.captionTracks = tracks
+          .filter(
+            (t: { baseUrl?: string; languageCode?: string }) =>
+              t.baseUrl && t.languageCode
+          )
+          .map((t: { baseUrl: string; languageCode: string }) => ({
+            baseUrl: t.baseUrl,
+            languageCode: t.languageCode,
+          }));
+      }
+
+      // If we got useful data, stop trying other clients
+      if (result.description || result.captionTracks.length > 0) {
+        console.log(
+          `Innertube ${client.clientName} success: desc=${result.description.length}chars, tracks=${result.captionTracks.length}`
+        );
+        return result;
+      }
+    } catch (e) {
+      console.error(`Innertube ${client.clientName} error:`, e);
+    }
+  }
+
+  return result;
+}
+
+// Fallback: scrape YouTube watch page for description and caption URLs
+async function fetchYouTubePageData(videoId: string): Promise<{
+  title: string;
+  description: string;
+  captionBaseUrl: string | null;
+}> {
+  const result = { title: "", description: "", captionBaseUrl: null as string | null };
 
   try {
     const res = await fetch(
-      "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        },
-        body: JSON.stringify({
-          videoId,
-          context: {
-            client: {
-              clientName: "WEB",
-              clientVersion: "2.20241126.01.00",
-              hl: "en",
-              gl: "US",
-            },
-          },
-        }),
-      }
+      `https://www.youtube.com/watch?v=${videoId}&hl=en&gl=US&has_verified=1`,
+      { headers: youtubeHeaders }
     );
 
-    if (!res.ok) return result;
-
-    const data = await res.json();
-
-    // Extract description
-    result.description =
-      data?.videoDetails?.shortDescription ||
-      data?.microformat?.playerMicroformatRenderer?.description?.simpleText ||
-      "";
-
-    // Extract caption tracks
-    const tracks =
-      data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (Array.isArray(tracks)) {
-      result.captionTracks = tracks
-        .filter(
-          (t: { baseUrl?: string; languageCode?: string }) =>
-            t.baseUrl && t.languageCode
-        )
-        .map((t: { baseUrl: string; languageCode: string }) => ({
-          baseUrl: t.baseUrl,
-          languageCode: t.languageCode,
-        }));
+    if (!res.ok) {
+      console.error(`YouTube page fetch failed: ${res.status}`);
+      return result;
     }
 
-    return result;
-  } catch {
-    return result;
+    const html = await res.text();
+    console.log(`YouTube page fetched: ${html.length} chars`);
+
+    // Extract title from og:title
+    const ogTitle = html.match(
+      /<meta\s+(?:property|name)="og:title"\s+content="([^"]*)"[^>]*>/i
+    );
+    if (ogTitle) result.title = decodeHtmlEntities(ogTitle[1]);
+
+    // Fallback title from <title>
+    if (!result.title) {
+      const titleTag = html.match(/<title[^>]*>(.*?)<\/title>/is);
+      if (titleTag) result.title = decodeHtmlEntities(titleTag[1].trim());
+    }
+
+    // Extract description from ytInitialPlayerResponse
+    const playerMatch = html.match(
+      /var\s+ytInitialPlayerResponse\s*=\s*(\{.*?\});\s*(?:var|<\/script)/s
+    );
+    if (playerMatch) {
+      try {
+        const data = JSON.parse(playerMatch[1]);
+        result.description =
+          data?.videoDetails?.shortDescription ||
+          data?.microformat?.playerMicroformatRenderer?.description
+            ?.simpleText ||
+          "";
+
+        // Also try to get caption tracks from here
+        const tracks =
+          data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        if (Array.isArray(tracks) && tracks.length > 0) {
+          const englishTrack = tracks.find((t: { languageCode?: string }) =>
+            t.languageCode?.startsWith("en")
+          );
+          const track = englishTrack || tracks[0];
+          if (track?.baseUrl) {
+            result.captionBaseUrl = track.baseUrl.replace(/\\u0026/g, "&");
+          }
+        }
+      } catch (e) {
+        console.error("Failed to parse ytInitialPlayerResponse:", e);
+      }
+    }
+
+    // Fallback: try to extract captions URL from raw HTML
+    if (!result.captionBaseUrl) {
+      const captionsMatch = html.match(
+        /"captions":\s*(\{.*?"playerCaptionsTracklistRenderer".*?\})\s*,\s*"/s
+      );
+      if (captionsMatch) {
+        const urlMatch = captionsMatch[1].match(
+          /"baseUrl"\s*:\s*"(https:[^"]+)"/
+        );
+        if (urlMatch) {
+          result.captionBaseUrl = urlMatch[1].replace(/\\u0026/g, "&");
+        }
+      }
+    }
+
+    // Fallback description from og:description
+    if (!result.description) {
+      const ogDesc = html.match(
+        /<meta\s+(?:property|name)="og:description"\s+content="([^"]*)"[^>]*>/i
+      );
+      if (ogDesc) result.description = decodeHtmlEntities(ogDesc[1]);
+    }
+
+    console.log(
+      `Page scrape: title=${result.title.length}chars, desc=${result.description.length}chars, captions=${!!result.captionBaseUrl}`
+    );
+  } catch (e) {
+    console.error("YouTube page scrape error:", e);
   }
+
+  return result;
+}
+
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, "/");
 }
 
 // Fetch transcript from a caption track URL
-async function fetchTranscriptFromTrack(
+async function fetchTranscriptFromUrl(
   captionUrl: string
 ): Promise<string | null> {
   try {
     const res = await fetch(captionUrl);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(`Caption fetch failed: ${res.status}`);
+      return null;
+    }
     const xml = await res.text();
 
     const textParts: string[] = [];
@@ -133,27 +293,13 @@ async function fetchTranscriptFromTrack(
       );
     }
     return textParts.length > 0 ? textParts.join(" ") : null;
-  } catch {
+  } catch (e) {
+    console.error("Transcript fetch error:", e);
     return null;
   }
 }
 
-// Fetch YouTube transcript using caption tracks from Innertube
-async function fetchYouTubeTranscript(
-  captionTracks: { baseUrl: string; languageCode: string }[]
-): Promise<string | null> {
-  if (captionTracks.length === 0) return null;
-
-  // Prefer English captions, fall back to first available
-  const englishTrack = captionTracks.find((t) =>
-    t.languageCode.startsWith("en")
-  );
-  const track = englishTrack || captionTracks[0];
-
-  return fetchTranscriptFromTrack(track.baseUrl);
-}
-
-// Extract metadata from page HTML (Open Graph tags, title, description)
+// Extract metadata from page HTML (for non-YouTube platforms)
 function extractPageMetadata(html: string): {
   title: string;
   description: string;
@@ -161,25 +307,21 @@ function extractPageMetadata(html: string): {
   let title = "";
   let description = "";
 
-  // Open Graph title
   const ogTitle = html.match(
     /<meta\s+(?:property|name)="og:title"\s+content="([^"]*)"[^>]*>/i
   );
   if (ogTitle) title = ogTitle[1];
 
-  // Fallback to <title>
   if (!title) {
     const titleTag = html.match(/<title[^>]*>(.*?)<\/title>/is);
     if (titleTag) title = titleTag[1].trim();
   }
 
-  // Open Graph description
   const ogDesc = html.match(
     /<meta\s+(?:property|name)="og:description"\s+content="([^"]*)"[^>]*>/i
   );
   if (ogDesc) description = ogDesc[1];
 
-  // Fallback to meta description
   if (!description) {
     const metaDesc = html.match(
       /<meta\s+name="description"\s+content="([^"]*)"[^>]*>/i
@@ -187,18 +329,10 @@ function extractPageMetadata(html: string): {
     if (metaDesc) description = metaDesc[1];
   }
 
-  // Decode HTML entities
-  const decode = (s: string) =>
-    s
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&#39;/g, "'")
-      .replace(/&quot;/g, '"')
-      .replace(/&#x27;/g, "'")
-      .replace(/&#x2F;/g, "/");
-
-  return { title: decode(title), description: decode(description) };
+  return {
+    title: decodeHtmlEntities(title),
+    description: decodeHtmlEntities(description),
+  };
 }
 
 Deno.serve(async (req) => {
@@ -236,32 +370,60 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Fetch oEmbed metadata and Innertube data in parallel
+      console.log(`Processing YouTube video: ${videoId}`);
+
+      // Strategy 1: oEmbed + Innertube (in parallel)
       const [oembedResult, innertubeResult] = await Promise.all([
         fetchYouTubeOEmbed(videoId),
         fetchYouTubeInnertube(videoId),
       ]);
 
-      // Use oEmbed for title (most reliable)
       if (oembedResult) {
         pageTitle = oembedResult.title;
       }
 
-      // Use Innertube for description and captions
       videoDescription = innertubeResult.description;
 
-      // Fetch transcript from caption tracks
+      // Fetch transcript from Innertube caption tracks
       if (innertubeResult.captionTracks.length > 0) {
-        transcript =
-          (await fetchYouTubeTranscript(innertubeResult.captionTracks)) || "";
+        const englishTrack = innertubeResult.captionTracks.find((t) =>
+          t.languageCode.startsWith("en")
+        );
+        const track = englishTrack || innertubeResult.captionTracks[0];
+        transcript = (await fetchTranscriptFromUrl(track.baseUrl)) || "";
       }
+
+      // Strategy 2: If Innertube didn't give us enough, fall back to page scraping
+      if (!videoDescription && !transcript) {
+        console.log("Innertube insufficient, falling back to page scraping...");
+        const pageData = await fetchYouTubePageData(videoId);
+
+        if (!pageTitle && pageData.title) {
+          pageTitle = pageData.title;
+        }
+        if (!videoDescription && pageData.description) {
+          videoDescription = pageData.description;
+        }
+        if (!transcript && pageData.captionBaseUrl) {
+          transcript =
+            (await fetchTranscriptFromUrl(pageData.captionBaseUrl)) || "";
+        }
+      }
+
+      // Use Innertube title as fallback
+      if (!pageTitle && innertubeResult.title) {
+        pageTitle = innertubeResult.title;
+      }
+
+      console.log(
+        `Final data: title=${pageTitle.length}chars, desc=${videoDescription.length}chars, transcript=${transcript.length}chars`
+      );
     } else {
       // Instagram / Facebook / Unknown - fetch page and extract metadata
       try {
         const pageRes = await fetch(url, {
           headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": youtubeHeaders["User-Agent"],
             "Accept-Language": "en-US,en;q=0.9",
           },
           redirect: "follow",
@@ -366,20 +528,19 @@ ${context}`,
     }
 
     const aiData = await aiResponse.json();
-    const aiText =
-      aiData.content?.[0]?.text || "";
+    const aiText = aiData.content?.[0]?.text || "";
 
     // Parse the JSON from Claude's response
     let recipe;
     try {
-      // Try to extract JSON from the response (handle potential markdown wrapping)
       const jsonMatch = aiText.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error("No JSON found");
       recipe = JSON.parse(jsonMatch[0]);
     } catch {
       return new Response(
         JSON.stringify({
-          error: "Could not parse recipe from this video. The video may not contain a clear recipe.",
+          error:
+            "Could not parse recipe from this video. The video may not contain a clear recipe.",
         }),
         {
           status: 422,
@@ -394,14 +555,13 @@ ${context}`,
       category: recipe.category || "Other",
       calories_per_serving: recipe.calories_per_serving || null,
       ingredients: Array.isArray(recipe.ingredients)
-        ? recipe.ingredients.map(
-            (ing: { name?: string; qty?: string; unit?: string }) => ({
+        ? recipe.ingredients
+            .map((ing: { name?: string; qty?: string; unit?: string }) => ({
               name: String(ing.name || "").trim(),
               qty: String(ing.qty || "").trim(),
               unit: String(ing.unit || "").trim(),
-            })
-          )
-        .filter((ing: { name: string }) => ing.name)
+            }))
+            .filter((ing: { name: string }) => ing.name)
         : [],
       source_url: url,
       platform,
